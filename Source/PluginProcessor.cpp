@@ -279,6 +279,11 @@ void AerytherAudioProcessor::makeImpulseResponses(double sr,int maxBlock) {
 
 void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
     currentSampleRate=sr;
+    subEnvelopeLevel=0.f;
+    subCurrentNote=-1.0;
+    subPhases.fill(0.0);
+    heldNotes.fill(false);
+    lastWaveNote=-1.0;
     blockCapacity=juce::jmax(64,maximumBlock);
     for(auto& voice:waveVoices)voice.envelope.setSampleRate(sr);
     for(auto& voice:sampleVoices)voice.envelope.setSampleRate(sr);
@@ -422,16 +427,40 @@ void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce:
     }
     int lowest=-1;
     for(int n=0;n<128;++n)if(heldNotes[size_t(n)]){lowest=n;break;}
-    const auto sg=juce::Decibels::decibelsToGain(clampf(modulated("subLevel",get("subLevel"),lfo1,lfo2),-60,6))*0.35f;
+    const float sg=juce::Decibels::decibelsToGain(
+        clampf(modulated("subLevel",get("subLevel"),lfo1,lfo2),-60,6))*0.35f;
+    // SUB used to stop at the first note-off sample and to start at full amplitude.
+    // Both edges create audible discontinuities, especially in low-frequency bass.
+    // Smooth amplitude per-sample (4 ms attack / 14 ms release), retaining the
+    // oscillator phase while the last note releases. Also smooth note switches.
+    const float attackStep=1.0f-std::exp(-1.0f/float(0.004*currentSampleRate));
+    const float releaseStep=1.0f-std::exp(-1.0f/float(0.014*currentSampleRate));
+    const double pitchStep=1.0-std::exp(-1.0/(0.016*currentSampleRate));
+    const double transpose=get("subOctave")*12.0+get("subTune")/100.0+
+                           modulated("subPitch",0.f,lfo1,lfo2);
+    const int subShape=int(get("subShape"));
     for(int i=first;i<first+length;++i) {
-        if(lowest<0)continue;
-        double n=lowest+12.0*get("subOctave")+get("subTune")/100.0+
-                 modulated("subPitch",0.f,lfo1,lfo2);
-        subPhases[0]+=midiHz(n)/currentSampleRate;
-        if(subPhases[0]>=1)subPhases[0]-=std::floor(subPhases[0]);
-        double s=int(get("subShape"))==0?std::sin(2*pi*subPhases[0]):
-                   4.0*std::abs(subPhases[0]-0.5)-1.0;
-        sub.addSample(0,i,float(s)*sg);sub.addSample(1,i,float(s)*sg);
+        const float targetGain=lowest>=0?1.f:0.f;
+        subEnvelopeLevel+=(targetGain-subEnvelopeLevel)*
+                         (lowest>=0?attackStep:releaseStep);
+        if(lowest>=0) {
+            const double targetPitch=double(lowest)+transpose;
+            if(subCurrentNote<0.0)subCurrentNote=targetPitch;
+            else subCurrentNote+=(targetPitch-subCurrentNote)*pitchStep;
+        }
+        if(subCurrentNote<0.0 || (lowest<0 && subEnvelopeLevel<0.00001f)) {
+            if(lowest<0 && subEnvelopeLevel<0.00001f)subEnvelopeLevel=0.f;
+            continue;
+        }
+        const double step=double(midiHz(subCurrentNote))/currentSampleRate;
+        subPhases[0]+=step;
+        if(subPhases[0]>=1.0)subPhases[0]-=std::floor(subPhases[0]);
+        const double phase=subPhases[0];
+        const double value=subShape==0?std::sin(2.0*juce::MathConstants<double>::pi*phase)
+                                      :4.0*std::abs(phase-0.5)-1.0;
+        const float sample=float(value)*sg*subEnvelopeLevel;
+        sub.addSample(0,i,sample);
+        sub.addSample(1,i,sample);
     }
 }
 
