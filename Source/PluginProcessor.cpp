@@ -19,6 +19,36 @@ float readInterpolated(const juce::AudioBuffer<float>& b, int ch, double pos) {
     return juce::jmap(float(pos-a),b.getSample(juce::jmin(ch,b.getNumChannels()-1),a),
                      b.getSample(juce::jmin(ch,b.getNumChannels()-1),next));
 }
+double polyBlep(double phase, double step) {
+    if (step <= 0.0) return 0.0;
+    if (phase < step) { const double t=phase/step; return t+t-t*t-1.0; }
+    if (phase > 1.0-step) { const double t=(phase-1.0)/step; return t*t+t+t+1.0; }
+    return 0.0;
+}
+double oscWave(int shape, double phase, double step) {
+    const double sine=std::sin(phase*2.0*juce::MathConstants<double>::pi);
+    const double saw=2.0*phase-1.0-polyBlep(phase,step);
+    const double tri=4.0*std::abs(phase-0.5)-1.0;
+    const double square=(phase<0.5?1.0:-1.0)+polyBlep(phase,step)
+                        -polyBlep(std::fmod(phase+0.5,1.0),step);
+    switch(shape) {
+       case 0: return sine;
+       case 1: return tri;
+       case 2: return saw;
+       case 3: return square;
+       case 4: return (phase<0.25?1.0:-1.0)+polyBlep(phase,step)
+                      -polyBlep(std::fmod(phase+0.75,1.0),step);
+       case 5: return std::tanh(1.4*saw)/std::tanh(1.4);
+       case 6: {
+          double p2=std::fmod(phase+0.26,1.0);
+          return 0.5*(saw+2.0*p2-1.0-polyBlep(p2,step));
+       }
+       case 7: return 0.65*sine+0.35*saw;
+       case 8: return 0.75*sine+0.20*std::sin(6.0*juce::MathConstants<double>::pi*phase)
+                  +0.08*std::sin(10.0*juce::MathConstants<double>::pi*phase);
+       default: return sine;
+    }
+}
 float routedParam(juce::AudioProcessorValueTreeState& s, juce::String id) {
     if (auto* p=s.getRawParameterValue(id)) return p->load(); return 0.0f;
 }
@@ -284,7 +314,7 @@ juce::String AerytherAudioProcessor::sampleFileName() const {
 
 void AerytherAudioProcessor::handleMidi(const juce::MidiMessage& m) {
     if(m.isAllNotesOff() || m.isAllSoundOff()) {
-        heldNotes.fill(false);filterEnvelope.reset();amplitudeModEnvelope.reset();
+        heldNotes.fill(false);lastWaveNote=-1.0;filterEnvelope.reset();amplitudeModEnvelope.reset();
         for(auto& v:waveVoices)v.active=false;
         for(auto& v:sampleVoices)v.active=false;
         return;
@@ -301,19 +331,25 @@ void AerytherAudioProcessor::handleMidi(const juce::MidiMessage& m) {
         ae.attack=get("ampAttack");ae.decay=get("ampDecay");
         ae.sustain=get("ampSustain");ae.release=get("ampRelease");
         amplitudeModEnvelope.setParameters(ae);amplitudeModEnvelope.noteOn();
+        const bool legato=std::any_of(heldNotes.begin(),heldNotes.end(),[](bool held){return held;});
         heldNotes[size_t(note)]=true;
         auto makeVoice=[&](auto& pool){
             SynthVoice* v=nullptr;
             for(auto& item:pool)if(!item.active){v=&item;break;}
             if(!v)v=&pool[0];
             v->active=true;v->note=note;v->samplePosition=0;
+            v->glidePitch=double(note);
             v->phases.fill(0);
             juce::ADSR::Parameters env;
             env.attack=get("ampAttack");env.decay=get("ampDecay");
             env.sustain=get("ampSustain");env.release=get("ampRelease");
             v->envelope.setParameters(env);v->envelope.reset();v->envelope.noteOn();
+            return v;
         };
-        makeVoice(waveVoices);
+        auto* voice=makeVoice(waveVoices);
+        voice->glidePitch=(legato && lastWaveNote>=0 && get("waveGlide")>0.0005f)
+                          ?lastWaveNote:double(note);
+        lastWaveNote=double(note);
         if(!enabled("loopPlay")) makeVoice(sampleVoices);
     } else if(m.isNoteOff()) {
         heldNotes[size_t(note)]=false;
@@ -326,18 +362,25 @@ void AerytherAudioProcessor::handleMidi(const juce::MidiMessage& m) {
 }
 
 float AerytherAudioProcessor::modulated(const char* destination,float original,float lfo1,float lfo2) const {
+    // The matrix uses bipolar modulation with destination-specific musical ranges.
+    struct Destination { const char* id; float depth; };
+    static constexpr Destination destinations[]={
+        {"off",0.f},{"cutoff",1.f},{"resonance",0.5f},{"drive",1.f},{"filterMix",1.f},
+        {"detune",50.f},{"width",1.f},{"wavePitch",12.f},{"waveLevel",18.f},
+        {"subPitch",12.f},{"subLevel",18.f},{"samplePitch",12.f},{"stretch",1.5f},
+        {"sampleLevel",18.f},{"delayTime",0.75f},{"delayFeedback",0.5f},
+        {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f}
+    };
     for(int i=1;i<=4;++i) {
-        auto prefix="mod"+juce::String(i);
-        int target=int(routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Target"));
-        int source=int(routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Source"));
-        float depth=routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Amount");
-        int requested=juce::String(destination)=="cutoff"?1:
-                      juce::String(destination)=="detune"?2:
-                      juce::String(destination)=="width"?3:
-                      juce::String(destination)=="delayFeedback"?4:
-                      juce::String(destination)=="convMix"?5:0;
-        if(target==requested && source>0)
-            original+=depth*(source==1?lfo1:source==2?lfo2:source==3?currentAmpModEnv:currentFilterEnv);
+        const auto prefix="mod"+juce::String(i);
+        const int target=int(routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Target"));
+        const int source=int(routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Source"));
+        if(target<=0 || target>=int(std::size(destinations)) || source<=0 ||
+           juce::String(destination)!=destinations[target].id)continue;
+        const float amount=routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Amount");
+        const float signal=source==1?lfo1:source==2?lfo2:
+                           source==3?currentAmpModEnv:currentFilterEnv;
+        original+=amount*destinations[target].depth*signal;
     }
     return original;
 }
