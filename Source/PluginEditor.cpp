@@ -182,9 +182,13 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     } else c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
     c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
     addAndMakeVisible(c->slider);
-    c->label.setText(title,juce::dontSendNotification);c->label.setFont(11);
+    c->label.setText(title,juce::dontSendNotification);
+    // Keep control labels in their own columns. The previous +/-8px expansion
+    // made adjacent WAVE labels overlap (dial spacing is only ~62 UI pixels).
+    const float captionSize=juce::String(title).length()>7?8.5f:10.0f;
+    c->label.setFont(juce::Font(juce::FontOptions(captionSize)));
     c->label.setJustificationType(juce::Justification::centred);
-    c->label.setBounds(r.getX()-8,r.getY(),r.getWidth()+16,14);
+    c->label.setBounds(r.getX()-3,r.getY(),r.getWidth()+6,14);
     addAndMakeVisible(c->label);
     c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
     c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
