@@ -62,6 +62,16 @@ int main() {
       distinct=true;break;
     }
     assert(distinct);
+    // Full reverse inverts the acoustic impulse only and preserves the same
+    // stereo response and length. A second reverse restores the original.
+    auto before=left;
+    reverseHugeHallImpulse(left);
+    assert(left.size()==before.size());
+    for(size_t i : {size_t(0),left.size()/3,left.size()-1})
+        assert(left[i]==before[left.size()-1-i]);
+    reverseHugeHallImpulse(left);
+    for(size_t i : {size_t(0),left.size()/3,left.size()-1})
+        assert(left[i]==before[i]);
   }
   std::cout << "Huge-hall IR: 4 modes, long tails, stereo decorrelation passed\\n";
   std::cout << "Aeryther source tests: defaults/routing/wet/transport/direction passed\n";
