@@ -96,7 +96,8 @@ private:
     std::array<LayerFilter, 3> layerFilters;
     std::array<juce::AudioBuffer<float>, 3> layerAudio;
     juce::AudioBuffer<float> convInput, processed, convWet, wetScratch;
-    std::array<juce::dsp::Convolution, 4> convolutions;
+    // Four original hall modes, each with NORMAL and REVERSE impulse responses.
+    std::array<juce::dsp::Convolution, 8> convolutions;
     AerytherSpaciousReverb reverb;
     juce::ADSR filterEnvelope, amplitudeModEnvelope;
     float currentFilterEnv = 0.0f, currentAmpModEnv = 0.0f;
