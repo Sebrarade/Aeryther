@@ -188,8 +188,13 @@ void AerytherAudioProcessorEditor::panel(juce::Graphics& g,juce::Rectangle<int> 
 void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
     auto r=waveformRect.toFloat();
     g.setColour(pale);g.fillRoundedRectangle(r,6);
-    auto peaks=processor.waveformPeaks(240);
-    auto hasAudio=processor.sampleFileName().isNotEmpty();
+    const auto name=processor.sampleFileName();
+    if(name!=cachedSampleFile || cachedPeaks.empty()){
+        cachedPeaks=processor.waveformPeaks(240);
+        cachedSampleFile=name;
+    }
+    const auto& peaks=cachedPeaks;
+    auto hasAudio=name.isNotEmpty();
     if(!hasAudio){addLabel(g,"Drop WAV / AIFF / FLAC here",r.reduced(17),15);return;}
     int n=int(peaks.size());
     g.setColour(juce::Colour::fromRGB(119,156,195));
@@ -204,6 +209,15 @@ void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
                                           r.getWidth()*(end-start),r.getHeight());
     g.setColour(blue);g.drawVerticalLine(int(r.getX()+r.getWidth()*start),r.getY(),r.getBottom());
     g.drawVerticalLine(int(r.getX()+r.getWidth()*end),r.getY(),r.getBottom());
+    // Animated sample readhead; host sync or MIDI-controlled playback.
+    if(processor.sampleHeadActive()){
+       float position=juce::jlimit(0.f,1.f,processor.sampleReadhead());
+       float x=r.getX()+r.getWidth()*(start+(end-start)*position);
+       g.setColour(juce::Colours::white.withAlpha(.75f));
+       g.drawVerticalLine(int(x)+1,r.getY()+2,r.getBottom()-2);
+       g.setColour(juce::Colour::fromRGB(23,107,213));
+       g.drawVerticalLine(int(x),r.getY()+2,r.getBottom()-2);
+    }
 }
 void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.fillAll(juce::Colour::fromRGB(239,243,249));
@@ -308,15 +322,19 @@ void AerytherAudioProcessorEditor::setLoopMarker(float fraction,bool start){
     repaint(waveformRect);
 }
 void AerytherAudioProcessorEditor::mouseDown(const juce::MouseEvent& e){
-    if(!waveformRect.contains(e.getPosition()))return;
-    float frac=float(e.getPosition().x-waveformRect.getX())/waveformRect.getWidth();
+    int x=juce::roundToInt(float(e.getPosition().x)/uiScale);
+    int y=juce::roundToInt(float(e.getPosition().y)/uiScale);
+    if(!waveformRect.contains(x,y))return;
+    float frac=float(x-waveformRect.getX())/waveformRect.getWidth();
     float a=processor.state.getRawParameterValue("loopStart")->load(),
           b=processor.state.getRawParameterValue("loopEnd")->load();
     draggingLoopStart=std::abs(frac-a)<std::abs(frac-b);
     setLoopMarker(frac,draggingLoopStart);
 }
 void AerytherAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e){
-    if(!waveformRect.expanded(60).contains(e.getPosition()))return;
-    setLoopMarker(float(e.getPosition().x-waveformRect.getX())/waveformRect.getWidth(),draggingLoopStart);
+    int x=juce::roundToInt(float(e.getPosition().x)/uiScale);
+    int y=juce::roundToInt(float(e.getPosition().y)/uiScale);
+    if(!waveformRect.expanded(60).contains(x,y))return;
+    setLoopMarker(float(x-waveformRect.getX())/waveformRect.getWidth(),draggingLoopStart);
 }
 juce::AudioProcessorEditor* AerytherAudioProcessor::createEditor(){return new AerytherAudioProcessorEditor(*this);}
