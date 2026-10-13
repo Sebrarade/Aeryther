@@ -106,6 +106,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     c("convMode","Convolver",{"AUUU","CROSS","CATHOLIC","DARK"},0);
     f("convMix","Convolver Mix",0,1,1);
     f("reverbDecay","Reverb Decay",0.5f,60,60);
+    f("reverbTone","Reverb Tone",0,1,0.72f,0.001f);
     f("reverbMix","Reverb Mix",0,1,1);
     const juce::StringArray sources{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"};
     const juce::StringArray targets{
@@ -113,7 +114,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
         "Wave Detune","Wave Width","Wave Pitch","Wave Level",
         "Sub Pitch","Sub Level","Sample Pitch","Sample Stretch","Sample Level",
         "Delay Time","Delay Feedback","Delay Mix",
-        "Convolver Mix","Reverb Decay","Reverb Mix"
+        "Convolver Mix","Reverb Decay","Reverb Mix","Reverb Tone"
     };
     for(int i=1;i<=4;++i) {
         auto prefix="mod"+juce::String(i);
@@ -374,7 +375,7 @@ float AerytherAudioProcessor::modulated(const char* destination,float original,f
         {"detune",50.f},{"width",1.f},{"wavePitch",12.f},{"waveLevel",18.f},
         {"subPitch",12.f},{"subLevel",18.f},{"samplePitch",12.f},{"stretch",1.5f},
         {"sampleLevel",18.f},{"delayTime",0.75f},{"delayFeedback",0.5f},
-        {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f}
+        {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f},{"reverbTone",1.f}
     };
     for(int i=1;i<=4;++i) {
         const auto prefix="mod"+juce::String(i);
@@ -604,7 +605,9 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
         }
     }
     wetScratch.makeCopyOf(processed,true);
-    reverb.process(wetScratch,clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f));
+    reverb.process(wetScratch,
+        clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f),
+        clampf(modulated("reverbTone",get("reverbTone"),lfo1,lfo2),0.f,1.f));
     float rv=clampf(modulated("reverbMix",get("reverbMix"),lfo1,lfo2),0.f,1.f);
     for(int ch=0;ch<2;++ch) {
         for(int i=0;i<samples;++i)
