@@ -7,6 +7,15 @@ const juce::Colour blue=juce::Colour::fromRGB(69,143,218);
 const juce::Colour pale=juce::Colour::fromRGB(235,241,249);
 const juce::Colour border=juce::Colour::fromRGB(205,215,229);
 const juce::Colour white=juce::Colour::fromRGB(248,250,254);
+#if defined(AERYTHER_FX)
+constexpr float uiScale=0.8f;
+#else
+constexpr float uiScale=0.76f;
+#endif
+juce::Rectangle<int> compact(juce::Rectangle<int> r){
+ return {juce::roundToInt(r.getX()*uiScale),juce::roundToInt(r.getY()*uiScale),
+ juce::roundToInt(r.getWidth()*uiScale),juce::roundToInt(r.getHeight()*uiScale)};
+}
 }
 AerytherAudioProcessorEditor::LightLook::LightLook(){
     setColour(juce::ComboBox::backgroundColourId,pale);
@@ -52,7 +61,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     :juce::AudioProcessorEditor(&p),processor(p){
     setLookAndFeel(&look);setOpaque(true);
 #if defined(AERYTHER_FX)
-    setSize(1090,300);
+    setSize(872,240);
     // FX keeps only the processing controls; no sampler or MIDI layers.
     addSwitch("sampleFilter","FILTER ON",{55,80,140,32});
     addChoice("filterType",{54,124,195,28});
@@ -71,7 +80,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("reverbMix","MIX",{949,161,78,85});
     addSwitch("sampleDirect","DIRECT",{640,258,140,30});
 #else
-    setSize(1540,900);
+    setSize(1170,684);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
     // Top row: Sample (left), Wave (middle), Sub (right)
     auto sampleKnobs=std::array<const char*,5>{"root","sampleFine","stretch","crossfade","sampleLevel"};
@@ -129,31 +138,34 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("convMix","MIX",{1228,808,72,82});
     addDial("reverbDecay","DECAY",{1345,812,72,80});
     addDial("reverbMix","MIX",{1440,812,72,80});
-    startTimerHz(3);
+    startTimerHz(24);
 #endif
 }
 AerytherAudioProcessorEditor::~AerytherAudioProcessorEditor(){setLookAndFeel(nullptr);}
 void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce::Rectangle<int> r){
+    r=compact(r);
     auto c=std::make_unique<Dial>(); c->name=title;
     c->slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
-    c->slider.setBounds(r.removeFromTop(r.getHeight()-19));
+    c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
     addAndMakeVisible(c->slider);
     c->label.setText(title,juce::dontSendNotification);c->label.setFont(11);
     c->label.setJustificationType(juce::Justification::centred);
-    c->label.setBounds(r.getX()-10,r.getBottom()-19,r.getWidth()+20,19);
+    c->label.setBounds(r.getX()-8,r.getY(),r.getWidth()+16,14);
     addAndMakeVisible(c->label);
     c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
     c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
     dials.push_back(std::move(c));
 }
 void AerytherAudioProcessorEditor::addSwitch(const char* id,const char* title,juce::Rectangle<int> r){
+    r=compact(r);
     auto c=std::make_unique<Switch>();c->button.setButtonText(title);c->button.setBounds(r);
     addAndMakeVisible(c->button);
     c->attachment=std::make_unique<BoolAttach>(processor.state,id,c->button);
     switches.push_back(std::move(c));
 }
 void AerytherAudioProcessorEditor::addChoice(const char* id,juce::Rectangle<int> r){
+    r=compact(r);
     auto c=std::make_unique<Choice>();c->box.setBounds(r);
     if(auto* p=dynamic_cast<juce::AudioParameterChoice*>(processor.state.getParameter(id))) {
         int item=1;for(auto& name:p->choices)c->box.addItem(name,item++);
@@ -195,6 +207,7 @@ void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
 }
 void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.fillAll(juce::Colour::fromRGB(239,243,249));
+    g.addTransform(juce::AffineTransform::scale(uiScale));
 #if defined(AERYTHER_FX)
     g.setColour(ink);g.setFont(juce::FontOptions(23.f));
     g.drawText("AERYTHER FX",juce::Rectangle<int>{0,7,getWidth(),40},juce::Justification::centred);
@@ -264,7 +277,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
 }
 void AerytherAudioProcessorEditor::resized(){
 #if !defined(AERYTHER_FX)
-    browse.setBounds(58,102,102,28);
+    browse.setBounds(compact({58,102,102,28}));
 #endif
 }
 bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files){
