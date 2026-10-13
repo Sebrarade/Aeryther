@@ -151,66 +151,109 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("reverbDecay","DECAY",{1332,812,54,80});
     addDial("reverbTone","TONE",{1394,812,54,80});
     addDial("reverbMix","MIX",{1456,812,54,80});
+    refreshParameterReadouts();
     startTimerHz(24);
 #endif
 }
 AerytherAudioProcessorEditor::~AerytherAudioProcessorEditor(){setLookAndFeel(nullptr);}
 void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce::Rectangle<int> r){
     r=compact(r);
-    auto c=std::make_unique<Dial>(); c->name=title;
+    auto c=std::make_unique<Dial>();
     const auto parameterId=juce::String(id);
+    c->name=title;
+    c->parameterID=parameterId;
     const bool matrixAmount=parameterId.startsWith("mod") &&
                              parameterId.endsWith("Amount");
-    c->slider.setSliderStyle(matrixAmount
-        ? juce::Slider::LinearHorizontal
-        : juce::Slider::RotaryHorizontalVerticalDrag);
+    const bool hasReadout=parameterId=="root" || parameterId=="sampleBpm";
+    c->slider.setSliderStyle(matrixAmount?juce::Slider::LinearHorizontal:
+                                           juce::Slider::RotaryHorizontalVerticalDrag);
     if(matrixAmount) {
         c->slider.setTextBoxStyle(juce::Slider::TextBoxRight,false,40,16);
-    } else if (parameterId == "sampleBpm") {
-        c->slider.textFromValueFunction=[](double v) {
-            return juce::String(juce::jlimit(30,300,juce::roundToInt(v)));
-        };
-        c->slider.valueFromTextFunction=[](const juce::String& text) {
-            return juce::jlimit(30.0,300.0,text.trim().getDoubleValue());
-        };
-        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,55,19);
-        c->slider.setTooltip("Sample BPM: turn the knob or type a BPM number");
-    } else if (parameterId == "root") {
-        // Expose the sampler root as a musical note, not a bare MIDI integer.
-        // MIDI 60 = C3 in Ableton's middle-C naming convention.
-        c->slider.textFromValueFunction=[](double v) {
-            return juce::MidiMessage::getMidiNoteName(
-                juce::jlimit(0,127,int(std::lround(v))),true,true,3);
-        };
-        c->slider.valueFromTextFunction=[](const juce::String& input) {
-            const auto requested=input.trim().toUpperCase();
-            for(int n=0;n<128;++n)
-                if(juce::MidiMessage::getMidiNoteName(n,true,true,3).equalsIgnoreCase(requested))
-                    return double(n);
-            return juce::jlimit(0.0,127.0,requested.getDoubleValue());
-        };
-        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,52,19);
-    } else c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
-    if(matrixAmount) {
-        // One slim bipolar slider per row. A rotary control previously
-        // extended 8px into the following modulation row.
         c->slider.setBounds(r);
+    } else if(hasReadout) {
+        // Never rely on a Slider's embedded textbox. On the compact UI its
+        // text can be clipped or drawn underneath the rotary slider.
+        // Title, rotary knob and independently painted value occupy separate rows.
+        c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        c->slider.setBounds(r.getX()+5,r.getY()+15,
+                            juce::jmax(20,r.getWidth()-10),38);
     } else {
+        c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
         c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
     }
     addAndMakeVisible(c->slider);
+
     if(!matrixAmount) {
         c->label.setText(title,juce::dontSendNotification);
-        const float captionSize=juce::String(title).length()>7?8.5f:10.0f;
-        c->label.setFont(juce::Font(juce::FontOptions(captionSize)));
+        const float fontSize=juce::String(title).length()>7?8.5f:10.0f;
+        c->label.setFont(juce::Font(juce::FontOptions(fontSize)));
         c->label.setJustificationType(juce::Justification::centred);
-        c->label.setBounds(r.getX()-3,r.getY(),r.getWidth()+6,14);
+        c->label.setBounds(hasReadout
+            ? juce::Rectangle<int>{r.getX()-3,r.getY(),r.getWidth()+6,14}
+            : juce::Rectangle<int>{r.getX()-3,r.getY(),r.getWidth()+6,14});
         addAndMakeVisible(c->label);
     }
-    c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
-    if(parameterId != "root" && parameterId != "sampleBpm")
+
+    if(hasReadout) {
+        c->valueLabel.setText(parameterId=="root"?"C3":"120",juce::dontSendNotification);
+        c->valueLabel.setJustificationType(juce::Justification::centred);
+        c->valueLabel.setFont(juce::Font(juce::FontOptions(13.0f)));
+        c->valueLabel.setColour(juce::Label::textColourId,ink);
+        c->valueLabel.setColour(juce::Label::backgroundColourId,pale);
+        c->valueLabel.setColour(juce::Label::outlineColourId,border);
+        c->valueLabel.setBounds(r.getX()-3,r.getY()+54,r.getWidth()+6,19);
+        c->valueLabel.setEditable(false,true,false); // double-click to type BPM or note
+        auto* control=c.get();
+        const bool isRoot=parameterId=="root";
+        c->valueLabel.onTextChange=[this,control,isRoot]{
+            const auto input=control->valueLabel.getText().trim();
+            double next=control->slider.getValue();
+            bool valid=false;
+            if(isRoot) {
+                for(int n=0;n<128;++n) {
+                    if(juce::MidiMessage::getMidiNoteName(n,true,true,3)
+                            .equalsIgnoreCase(input)) {
+                        next=double(n);valid=true;break;
+                    }
+                }
+                if(!valid && input.containsOnly("0123456789") && input.isNotEmpty()) {
+                    next=juce::jlimit(0.0,127.0,input.getDoubleValue());
+                    valid=true;
+                }
+            } else if(input.isNotEmpty() && input.containsOnly("0123456789.")) {
+                next=juce::jlimit(30.0,300.0,input.getDoubleValue());
+                valid=true;
+            }
+            if(valid)control->slider.setValue(next,juce::sendNotificationSync);
+            refreshParameterReadouts();
+        };
+        addAndMakeVisible(c->valueLabel);
+        c->slider.setTooltip(isRoot?"Root note: turn knob, or double-click note value to enter C3, F#3 etc"
+                                   :"Sample BPM: turn knob, or double-click the number to enter BPM");
+    } else {
         c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
+    }
+    c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
     dials.push_back(std::move(c));
+}
+void AerytherAudioProcessorEditor::refreshParameterReadouts(){
+    for(const auto& dial:dials) {
+        const bool isRoot=dial->parameterID=="root";
+        const bool isBpm=dial->parameterID=="sampleBpm";
+        if((!isRoot && !isBpm) || dial->valueLabel.isBeingEdited())continue;
+        const auto* raw=processor.state.getRawParameterValue(dial->parameterID);
+        if(!raw)continue;
+        const int n=juce::roundToInt(raw->load());
+        const auto value=isRoot
+            ? juce::MidiMessage::getMidiNoteName(juce::jlimit(0,127,n),true,true,3)
+            : juce::String(juce::jlimit(30,300,n));
+        if(dial->valueLabel.getText()!=value)
+            dial->valueLabel.setText(value,juce::dontSendNotification);
+    }
+}
+void AerytherAudioProcessorEditor::timerCallback(){
+    refreshParameterReadouts();
+    repaint();
 }
 void AerytherAudioProcessorEditor::addSwitch(const char* id,const char* title,juce::Rectangle<int> r){
     r=compact(r);
