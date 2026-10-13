@@ -1,0 +1,1 @@
+Additional beta release QA: pluginval level 5 headless on Aeryther Instrument and Aeryther FX VST3 after macOS Apple Silicon build. Runs independently of the build job and reports compatibility defects.

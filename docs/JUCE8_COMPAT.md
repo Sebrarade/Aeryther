@@ -1,0 +1,1 @@
+The beta source bundle replaces std::optional::value_or with juce::Optional::orFallback, and uses explicit juce::Rectangle<int> for ambiguous Graphics::drawText overloads. Retest macOS AU/VST3 compile.
