@@ -75,6 +75,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("delayMix","MIX",{516,161,75,85});
     addSwitch("sampleConv","CONV ON",{641,80,110,32});
     addChoice("convMode",{636,126,160,28});
+    addSwitch("convReverse","REVERSE",{638,174,87,27});
     addDial("convMix","MIX",{735,172,75,80});
     addDial("reverbDecay","DECAY",{846,161,66,85});
     addDial("reverbTone","TONE",{923,161,66,85});
@@ -145,6 +146,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
         addDial(ids[i],names[i],{523+i*105,814,72,76});}
     addSwitch("pingPong","PING-PONG",{729,780,112,30});
     addChoice("convMode",{877,798,295,31});
+    addSwitch("convReverse","REVERSE",{1041,846,126,32});
     addDial("convMix","MIX",{1228,808,72,82});
     addDial("reverbDecay","DECAY",{1332,812,54,80});
     addDial("reverbTone","TONE",{1394,812,54,80});
@@ -281,7 +283,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.3.3",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.4",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,235},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
@@ -292,7 +294,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setFont(juce::FontOptions(13.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.3.3",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.4",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
