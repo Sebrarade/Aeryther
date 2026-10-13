@@ -104,7 +104,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
        const char* names[]={"OCTAVE","TUNE","LEVEL"};
        addDial(ids[i],names[i],{1203+i*111,291,72,83});}
     const char* routing[3]={"sample","wave","sub"};
-    const int startX[3]={55,575,1200}, widths[3]={110,119,79};
+    const int startX[3]={55,584,1200}, widths[3]={110,119,79};
     for(int k=0;k<3;++k)for(int i=0;i<4;++i){
         const juce::String prefix=routing[k];
         const char* suffix[]={"Filter","Delay","Conv","Direct"};
