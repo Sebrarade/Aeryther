@@ -130,7 +130,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
         juce::String prefix="mod"+juce::String(i);
         int y=656+(i-1)*29;
         addChoice((prefix+"Source").toRawUTF8(),{290,y,250,26});
-        addDial((prefix+"Amount").toRawUTF8(),"",{562,y-7,72,37});
+        addDial((prefix+"Amount").toRawUTF8(),"",{562,y,178,26});
         addChoice((prefix+"Target").toRawUTF8(),{780,y,335,26});
     }
     addChoice("filterType",{194,786,210,29});
@@ -153,9 +153,16 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     r=compact(r);
     auto c=std::make_unique<Dial>(); c->name=title;
     const auto parameterId=juce::String(id);
-    c->slider.setSliderStyle(parameterId=="sampleBpm"
-        ? juce::Slider::LinearBar : juce::Slider::RotaryHorizontalVerticalDrag);
-    if (parameterId == "sampleBpm") {
+    const bool matrixAmount=parameterId.startsWith("mod") &&
+                             parameterId.endsWith("Amount");
+    c->slider.setSliderStyle(matrixAmount
+        ? juce::Slider::LinearHorizontal
+        : parameterId=="sampleBpm"
+          ? juce::Slider::LinearBar
+          : juce::Slider::RotaryHorizontalVerticalDrag);
+    if(matrixAmount) {
+        c->slider.setTextBoxStyle(juce::Slider::TextBoxRight,false,40,16);
+    } else if (parameterId == "sampleBpm") {
         c->slider.textFromValueFunction=[](double v) {
             return juce::String(juce::jlimit(30,300,juce::roundToInt(v)));
         };
@@ -180,16 +187,22 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
         };
         c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,49,16);
     } else c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
-    c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
+    if(matrixAmount) {
+        // One slim bipolar slider per row. A rotary control previously
+        // extended 8px into the following modulation row.
+        c->slider.setBounds(r);
+    } else {
+        c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
+    }
     addAndMakeVisible(c->slider);
-    c->label.setText(title,juce::dontSendNotification);
-    // Keep control labels in their own columns. The previous +/-8px expansion
-    // made adjacent WAVE labels overlap (dial spacing is only ~62 UI pixels).
-    const float captionSize=juce::String(title).length()>7?8.5f:10.0f;
-    c->label.setFont(juce::Font(juce::FontOptions(captionSize)));
-    c->label.setJustificationType(juce::Justification::centred);
-    c->label.setBounds(r.getX()-3,r.getY(),r.getWidth()+6,14);
-    addAndMakeVisible(c->label);
+    if(!matrixAmount) {
+        c->label.setText(title,juce::dontSendNotification);
+        const float captionSize=juce::String(title).length()>7?8.5f:10.0f;
+        c->label.setFont(juce::Font(juce::FontOptions(captionSize)));
+        c->label.setJustificationType(juce::Justification::centred);
+        c->label.setBounds(r.getX()-3,r.getY(),r.getWidth()+6,14);
+        addAndMakeVisible(c->label);
+    }
     c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
     c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
     dials.push_back(std::move(c));
