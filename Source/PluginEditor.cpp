@@ -76,21 +76,24 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addSwitch("sampleConv","CONV ON",{641,80,110,32});
     addChoice("convMode",{636,126,160,28});
     addDial("convMix","MIX",{735,172,75,80});
-    addDial("reverbDecay","DECAY",{848,161,78,85});
-    addDial("reverbMix","MIX",{949,161,78,85});
+    addDial("reverbDecay","DECAY",{846,161,66,85});
+    addDial("reverbTone","TONE",{923,161,66,85});
+    addDial("reverbMix","MIX",{999,161,66,85});
     addSwitch("sampleDirect","DIRECT",{640,258,140,30});
 #else
     setSize(1170,684);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
     // Top row: Sample (left), Wave (middle), Sub (right)
-    auto sampleKnobs=std::array<const char*,5>{"root","sampleFine","stretch","crossfade","sampleLevel"};
-    auto sampleLabels=std::array<const char*,5>{"ROOT","FINE","STRETCH","CROSSFADE","LEVEL"};
-    for(int i=0;i<5;++i)addDial(sampleKnobs[i],sampleLabels[i],{57+i*100,296,70,77});
-    addSwitch("loopPlay","LOOP PLAY",{54,247,112,31});
-    // Keep the source BPM entry fully ABOVE the row of SAMPLE dials.
-    // The value is always visible and editable (30-300 BPM).
-    addDial("sampleBpm","BPM",{174,234,78,60});
-    addChoice("direction",{260,248,270,28});
+    // All SAMPLE dials share one row; BPM and ROOT get generous, readable
+    // numeric text boxes below the knobs without overlapping other controls.
+    auto sampleKnobs=std::array<const char*,6>{"root","sampleBpm","sampleFine",
+                                              "stretch","crossfade","sampleLevel"};
+    auto sampleLabels=std::array<const char*,6>{"ROOT","BPM","FINE","STRETCH",
+                                               "CROSSFADE","LEVEL"};
+    for(int i=0;i<6;++i)
+        addDial(sampleKnobs[i],sampleLabels[i],{56+i*84,290,70,96});
+    addSwitch("loopPlay","LOOP PLAY",{54,245,112,31});
+    addChoice("direction",{260,246,270,28});
     auto waveKnobs=std::array<const char*,7>{"unison","detune","width","waveOctave","waveFine","waveGlide","waveLevel"};
     auto waveLabels=std::array<const char*,7>{"UNISON","DETUNE","WIDTH","OCTAVE","FINE","GLIDE","LEVEL"};
     // Seven evenly spaced controls fit entirely inside WAVE (576..1185).
@@ -143,8 +146,9 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addSwitch("pingPong","PING-PONG",{729,780,112,30});
     addChoice("convMode",{877,798,295,31});
     addDial("convMix","MIX",{1228,808,72,82});
-    addDial("reverbDecay","DECAY",{1345,812,72,80});
-    addDial("reverbMix","MIX",{1440,812,72,80});
+    addDial("reverbDecay","DECAY",{1332,812,54,80});
+    addDial("reverbTone","TONE",{1394,812,54,80});
+    addDial("reverbMix","MIX",{1456,812,54,80});
     startTimerHz(24);
 #endif
 }
@@ -157,9 +161,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
                              parameterId.endsWith("Amount");
     c->slider.setSliderStyle(matrixAmount
         ? juce::Slider::LinearHorizontal
-        : parameterId=="sampleBpm"
-          ? juce::Slider::LinearBar
-          : juce::Slider::RotaryHorizontalVerticalDrag);
+        : juce::Slider::RotaryHorizontalVerticalDrag);
     if(matrixAmount) {
         c->slider.setTextBoxStyle(juce::Slider::TextBoxRight,false,40,16);
     } else if (parameterId == "sampleBpm") {
@@ -169,8 +171,8 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
         c->slider.valueFromTextFunction=[](const juce::String& text) {
             return juce::jlimit(30.0,300.0,text.trim().getDoubleValue());
         };
-        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,58,17);
-        c->slider.setTooltip("Source BPM: click the number and type e.g. 128");
+        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,55,19);
+        c->slider.setTooltip("Sample BPM: turn the knob or type a BPM number");
     } else if (parameterId == "root") {
         // Expose the sampler root as a musical note, not a bare MIDI integer.
         // MIDI 60 = C3 in Ableton's middle-C naming convention.
@@ -185,7 +187,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
                     return double(n);
             return juce::jlimit(0.0,127.0,requested.getDoubleValue());
         };
-        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,49,16);
+        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,52,19);
     } else c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
     if(matrixAmount) {
         // One slim bipolar slider per row. A rotary control previously
@@ -204,7 +206,8 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
         addAndMakeVisible(c->label);
     }
     c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
-    c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
+    if(parameterId != "root" && parameterId != "sampleBpm")
+        c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
     dials.push_back(std::move(c));
 }
 void AerytherAudioProcessorEditor::addSwitch(const char* id,const char* title,juce::Rectangle<int> r){
@@ -278,7 +281,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.3.1",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.2",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,235},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
@@ -289,7 +292,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setFont(juce::FontOptions(13.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.3.1",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.2",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
@@ -328,7 +331,9 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     graph({1210.f,139.f,276.f,33.f},1,1);
     g.setColour(ink.withAlpha(.6f));g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{57,75,240,12},juce::Justification::left);
-    g.drawText(processor.sampleFileName(),juce::Rectangle<int>{342,103,206,21},juce::Justification::centredRight);
+    g.drawFittedText(processor.sampleFileName(),
+                     juce::Rectangle<int>{206,105,185,21},
+                     juce::Justification::centredRight,1);
     g.drawText("SOURCE",juce::Rectangle<int>{210,638,65,16},juce::Justification::left);
     g.drawText("AMOUNT",juce::Rectangle<int>{570,638,75,16},juce::Justification::left);
     g.drawText("DESTINATION",juce::Rectangle<int>{785,638,145,16},juce::Justification::left);
@@ -336,7 +341,8 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
 }
 void AerytherAudioProcessorEditor::resized(){
 #if !defined(AERYTHER_FX)
-    browse.setBounds(compact({58,102,102,28}));
+    // Header title is on the left; LOAD AUDIO belongs on the far right.
+    browse.setBounds(compact({409,103,137,27}));
 #endif
 }
 bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files){
