@@ -61,6 +61,7 @@ private:
         juce::ADSR envelope;
         std::array<double, 8> phases {};
         double samplePosition = 0.0;
+        double glidePitch = -1.0;
     };
     struct DelayLine {
         std::array<std::vector<float>, 2> ring;
@@ -102,6 +103,7 @@ private:
     double currentSampleRate = 44100.0;
     int blockCapacity = 0;
     double subCurrentNote = -1;
+    double lastWaveNote = -1.0;
     double lfoPhases[2] {0.0, 0.0};
     uint64_t transportFrameCounter = 0;
     std::atomic<float> playbackFraction{0.f};
@@ -114,7 +116,7 @@ private:
                            int start, int length, float lfo1, float lfo2);
     void renderSampler(juce::AudioBuffer<float>& dest, int start, int length,
                        bool loopPlaying, double hostPpq, double hostBpm,
-                       int64_t hostSampleStart, double sourceBpm);
+                       int64_t hostSampleStart, double sourceBpm, float lfo1, float lfo2);
     void applyRouting(juce::AudioBuffer<float>& output, int samples, float lfo1, float lfo2);
     void handleMidi(const juce::MidiMessage& m);
     void makeImpulseResponses(double sampleRate, int maxBlock);
