@@ -91,4 +91,11 @@ inline std::vector<float> generateHugeHallImpulse(int mode, int channel, double 
     }
     return out;
 }
+// Exactly reverse the impulse response in time. This reverses the *space*,
+// not the incoming musical audio. The existing IR has smooth fades at both
+// ends, so reversing it retains soft transitions and makes the tail swell.
+inline void reverseHugeHallImpulse(std::vector<float>& samples) noexcept {
+    std::reverse(samples.begin(),samples.end());
+}
+
 } // namespace aeryther
