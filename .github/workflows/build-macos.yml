@@ -23,11 +23,30 @@ jobs:
           mkdir -p dist
           find build-mac -type d \( -name '*.vst3' -o -name '*.component' \) -exec cp -R {} dist/ \;
           test -n "$(ls -A dist)"
-      - name: Upload unsigned beta plugins
+      - name: Re-sign completed plugin bundles and verify seals
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bundle in dist/*.vst3 dist/*.component; do
+            test -f "$bundle/Contents/Info.plist"
+            test -x "$bundle/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$bundle/Contents/Info.plist")"
+            codesign --force --sign - --verbose=2 "$bundle"
+            codesign --verify --strict --verbose=2 "$bundle"
+            echo "Verified: $bundle"
+          done
+      - name: Package executable bundles inside a permission-preserving ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          /usr/bin/zip -qry ../Aeryther-macOS-resigned-beta.zip -- *.vst3 *.component
+          cd ..
+          unzip -t Aeryther-macOS-resigned-beta.zip
+      - name: Upload re-signed beta ZIP (not notarized)
         uses: actions/upload-artifact@v4
         with:
-          name: Aeryther-macOS-beta-unsigned
-          path: dist/
+          name: Aeryther-macOS-beta-resigned
+          path: Aeryther-macOS-resigned-beta.zip
           if-no-files-found: error
 
   validate:
@@ -38,8 +57,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Aeryther-macOS-beta-unsigned
-          path: beta
+          name: Aeryther-macOS-beta-resigned
+          path: beta-package
+      - name: Expand signed beta bundles
+        shell: bash
+        run: |
+          mkdir beta
+          unzip -q beta-package/Aeryther-macOS-resigned-beta.zip -d beta
+          for bundle in beta/*.vst3 beta/*.component; do codesign --verify --strict --verbose=2 "$bundle"; done
       - name: Download pluginval
         run: |
           curl -fLsS "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip" -o pluginval.zip
