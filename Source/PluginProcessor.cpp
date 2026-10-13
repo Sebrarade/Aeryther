@@ -105,6 +105,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     f("delayFeedback","Delay Feedback",0,0.94f,0.35f);
     b("pingPong","Ping Pong",true); f("delayMix","Delay Mix",0,1,0.4f);
     c("convMode","Convolver",{"AUUU","CROSS","CATHOLIC","DARK"},0);
+    b("convReverse","Reverse Impulse",true);
     f("convMix","Convolver Mix",0,1,1);
     f("reverbDecay","Reverb Decay",0.5f,60,60);
     f("reverbTone","Reverb Tone",0,1,0.72f,0.001f);
@@ -242,27 +243,35 @@ void AerytherAudioProcessor::LayerFilter::process(juce::AudioBuffer<float>& b,in
 }
 
 void AerytherAudioProcessor::makeImpulseResponses(double sr,int maxBlock) {
-    // Colossal non-physical diffusion for experimental ambient resampling.
-    // The 34-54 second impulses are generated at up to 32kHz and JUCE's
-    // convolution engine resamples them to the host sample rate. This reduces
-    // both memory and prepare-time cost at 96/192kHz while preserving
-    // spacious stereo dynamics and a much longer bloom/tail.
+    // Colossal ambient halls: each profile is available in NORMAL and
+    // fully REVERSE convolution, not reverse sample playback.
+    // Use a 32kHz IR, resampled internally by the JUCE convolution engine.
     const double impulseRate=juce::jmin(sr,32000.0);
     for(int mode=0;mode<4;++mode) {
-        auto& conv=convolutions[size_t(mode)];
-        conv.prepare({sr,juce::uint32(maxBlock),2});
         const auto profile=aeryther::hugeHallProfiles[size_t(mode)];
         const int count=int(std::ceil(profile.durationSeconds*impulseRate));
-        juce::AudioBuffer<float> ir(2,count);
-        for(int ch=0;ch<2;++ch) {
-            auto values=aeryther::generateHugeHallImpulse(mode,ch,impulseRate);
-            jassert(int(values.size())==count);
-            std::copy(values.begin(),values.end(),ir.getWritePointer(ch));
+        std::array<std::vector<float>,2> channels;
+        for(int ch=0;ch<2;++ch)
+            channels[size_t(ch)]=aeryther::generateHugeHallImpulse(mode,ch,impulseRate);
+        for(int reversed=0;reversed<2;++reversed) {
+            // Both variants are prepared and loaded ahead of playback;
+            // switching reverse never generates impulses on the audio thread.
+            auto& conv=convolutions[size_t(mode+4*reversed)];
+            conv.prepare({sr,juce::uint32(maxBlock),2});
+            juce::AudioBuffer<float> ir(2,count);
+            for(int ch=0;ch<2;++ch) {
+                const auto& original=channels[size_t(ch)];
+                auto* dst=ir.getWritePointer(ch);
+                if(reversed)
+                    for(int i=0;i<count;++i)dst[i]=original[size_t(count-1-i)];
+                else
+                    std::copy(original.begin(),original.end(),dst);
+            }
+            conv.loadImpulseResponse(std::move(ir),impulseRate,
+                juce::dsp::Convolution::Stereo::yes,
+                juce::dsp::Convolution::Trim::no,
+                juce::dsp::Convolution::Normalise::yes);
         }
-        conv.loadImpulseResponse(std::move(ir),impulseRate,
-            juce::dsp::Convolution::Stereo::yes,
-            juce::dsp::Convolution::Trim::no,
-            juce::dsp::Convolution::Normalise::yes);
     }
 }
 
@@ -584,7 +593,7 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
     convWet.makeCopyOf(convInput,true);
     juce::dsp::AudioBlock<float> block(convWet);
     juce::dsp::ProcessContextReplacing<float> context(block);
-    convolutions[size_t(mode)].process(context);
+    convolutions[size_t(mode + (enabled("convReverse")?4:0))].process(context);
     float mix=clampf(modulated("convMix",get("convMix"),lfo1,lfo2),0,1);
     for(int ch=0;ch<2;++ch) {
         for(int i=0;i<samples;++i) {
