@@ -2,8 +2,8 @@ name: Build Aeryther macOS Beta
 on:
   push:
     branches: [main]
-  workflow_dispatch:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -12,30 +12,19 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Restore checked source package
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import base64
-          content=Path('ci/source-archive.base64').read_text().strip()
-          Path('aeryther-core.tar.xz').write_bytes(base64.b64decode(content, validate=True))
-          PY
-          tar -xJf aeryther-core.tar.xz
-          test -f Source/PluginProcessor.cpp
-          test -f Source/PluginEditor.cpp
-      - name: Configure JUCE VST3 AU Standalone
+      - name: Configure CMake and JUCE
         run: cmake -S . -B build-mac -DAERYTHER_BUILD_PLUGIN=ON -DAERYTHER_FETCH_JUCE=ON -DAERYTHER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
-      - name: Compile
+      - name: Compile Aeryther and Aeryther FX
         run: cmake --build build-mac --config Release --parallel 2
-      - name: Core regression tests
+      - name: Regression tests
         run: ctest --test-dir build-mac --output-on-failure
-      - name: Package macOS plugin builds
+      - name: Prepare AU and VST3 artifacts
         run: |
           mkdir -p dist
-          find build-mac -type d \( -name '*.vst3' -o -name '*.component' -o -name '*.app' \) -print
           find build-mac -type d \( -name '*.vst3' -o -name '*.component' \) -exec cp -R {} dist/ \;
-          if [ -z "$(ls -A dist)" ]; then echo "No plugin bundles produced" >&2; exit 1; fi
-      - uses: actions/upload-artifact@v4
+          test -n "$(ls -A dist)"
+      - name: Upload unsigned beta plugins
+        uses: actions/upload-artifact@v4
         with:
           name: Aeryther-macOS-beta-unsigned
           path: dist/
