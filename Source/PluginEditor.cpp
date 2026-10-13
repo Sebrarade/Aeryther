@@ -87,7 +87,9 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     auto sampleLabels=std::array<const char*,5>{"ROOT","FINE","STRETCH","CROSSFADE","LEVEL"};
     for(int i=0;i<5;++i)addDial(sampleKnobs[i],sampleLabels[i],{57+i*100,296,70,77});
     addSwitch("loopPlay","LOOP PLAY",{54,247,112,31});
-    addDial("sampleBpm","BPM",{175,238,66,67});
+    // Keep the source BPM entry fully ABOVE the row of SAMPLE dials.
+    // The value is always visible and editable (30-300 BPM).
+    addDial("sampleBpm","BPM",{174,234,78,60});
     addChoice("direction",{260,248,270,28});
     auto waveKnobs=std::array<const char*,7>{"unison","detune","width","waveOctave","waveFine","waveGlide","waveLevel"};
     auto waveLabels=std::array<const char*,7>{"UNISON","DETUNE","WIDTH","OCTAVE","FINE","GLIDE","LEVEL"};
@@ -150,8 +152,19 @@ AerytherAudioProcessorEditor::~AerytherAudioProcessorEditor(){setLookAndFeel(nul
 void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce::Rectangle<int> r){
     r=compact(r);
     auto c=std::make_unique<Dial>(); c->name=title;
-    c->slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    if (juce::String(id) == "root") {
+    const auto parameterId=juce::String(id);
+    c->slider.setSliderStyle(parameterId=="sampleBpm"
+        ? juce::Slider::LinearBar : juce::Slider::RotaryHorizontalVerticalDrag);
+    if (parameterId == "sampleBpm") {
+        c->slider.textFromValueFunction=[](double v) {
+            return juce::String(juce::jlimit(30,300,juce::roundToInt(v)));
+        };
+        c->slider.valueFromTextFunction=[](const juce::String& text) {
+            return juce::jlimit(30.0,300.0,text.trim().getDoubleValue());
+        };
+        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,58,17);
+        c->slider.setTooltip("Source BPM: click the number and type e.g. 128");
+    } else if (parameterId == "root") {
         // Expose the sampler root as a musical note, not a bare MIDI integer.
         // MIDI 60 = C3 in Ableton's middle-C naming convention.
         c->slider.textFromValueFunction=[](double v) {
