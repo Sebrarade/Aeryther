@@ -197,9 +197,9 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.fillAll(juce::Colour::fromRGB(239,243,249));
 #if defined(AERYTHER_FX)
     g.setColour(ink);g.setFont(juce::FontOptions(23.f));
-    g.drawText("AERYTHER FX",{0,7,getWidth(),40},juce::Justification::centred);
+    g.drawText("AERYTHER FX",juce::Rectangle<int>{0,7,getWidth(),40},juce::Justification::centred);
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
-    g.drawText("Volodymyr Gnatenko",{18,17,235,24},juce::Justification::centredLeft);
+    g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,235},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
