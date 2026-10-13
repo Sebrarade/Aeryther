@@ -28,6 +28,8 @@ private:
     struct Dial {
         juce::Slider slider;
         juce::Label label;
+        juce::Label valueLabel; // persistent, editable SAMPLE BPM/ROOT readout
+        juce::String parameterID;
         std::unique_ptr<SlideAttach> attachment;
         juce::String name;
     };
@@ -57,6 +59,7 @@ private:
     void paintWaveform(juce::Graphics&);
     void browseForAudio();
     void setLoopMarker(float frac,bool start);
-    void timerCallback() override { repaint(); }
+    void refreshParameterReadouts();
+    void timerCallback() override;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AerytherAudioProcessorEditor)
 };
