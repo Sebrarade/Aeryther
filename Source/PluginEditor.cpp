@@ -118,11 +118,11 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
         juce::String prefix=j==0?"lfo1":"lfo2";
         addDial((prefix+"Rate").toRawUTF8(),"FREE RATE",{xx,526,68,76});
         addDial((prefix+"Depth").toRawUTF8(),"DEPTH",{xx+100,526,68,76});
-        // First row: waveform and SYNC toggle. Second row: musical division.
-        // No control overlaps the envelope/LFO panels or rotary labels.
-        addChoice((prefix+"Shape").toRawUTF8(),{xx+110,484,140,28});
-        addSwitch((prefix+"Sync").toRawUTF8(),"SYNC",{xx+261,484,60,28});
-        addChoice((prefix+"Division").toRawUTF8(),{xx+200,544,112,28});
+        // Controls occupy separate vertical columns, below the LFO heading.
+        // Avoid decorative waveforms underneath live ComboBoxes and dials.
+        addChoice((prefix+"Shape").toRawUTF8(),{xx+187,507,126,27});
+        addSwitch((prefix+"Sync").toRawUTF8(),"SYNC",{xx+187,541,75,26});
+        addChoice((prefix+"Division").toRawUTF8(),{xx+187,578,126,27});
     }
     for(int i=1;i<=4;++i){
         juce::String prefix="mod"+juce::String(i);
@@ -151,7 +151,22 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     r=compact(r);
     auto c=std::make_unique<Dial>(); c->name=title;
     c->slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+    if (juce::String(id) == "root") {
+        // Expose the sampler root as a musical note, not a bare MIDI integer.
+        // MIDI 60 = C3 in Ableton's middle-C naming convention.
+        c->slider.textFromValueFunction=[](double v) {
+            return juce::MidiMessage::getMidiNoteName(
+                juce::jlimit(0,127,int(std::lround(v))),true,true,3);
+        };
+        c->slider.valueFromTextFunction=[](const juce::String& input) {
+            const auto requested=input.trim().toUpperCase();
+            for(int n=0;n<128;++n)
+                if(juce::MidiMessage::getMidiNoteName(n,true,true,3).equalsIgnoreCase(requested))
+                    return double(n);
+            return juce::jlimit(0.0,127.0,requested.getDoubleValue());
+        };
+        c->slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,49,16);
+    } else c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
     c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
     addAndMakeVisible(c->slider);
     c->label.setText(title,juce::dontSendNotification);c->label.setFont(11);
@@ -277,19 +292,10 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
             g.strokePath(curve,juce::PathStrokeType(1.4f));
         }
     };
-    graph({600.f,139.f,554.f,92.f},0,6);
-    graph({1210.f,139.f,276.f,92.f},1,1);
-    graph({852.f,506.f,304.f,44.f},3,1);
-    graph({1198.f,506.f,293.f,44.f},3,1);
-    auto envGraph=[&](float x,float width){
-        juce::Path env;
-        const float y0=518.f;
-        env.startNewSubPath(x,y0+23);env.lineTo(x+width*.15f,y0-15);
-        env.lineTo(x+width*.65f,y0-1);env.lineTo(x+width*.82f,y0-1);
-        env.lineTo(x+width,y0+23);
-        g.setColour(blue);g.strokePath(env,juce::PathStrokeType(1.3f));
-    };
-    envGraph(59.f,350.f);envGraph(466.f,333.f);
+    // Keep decorative waveforms in small dedicated spaces above the waveform selectors.
+    // The old envelope/LFO art painted directly beneath actual interactive controls.
+    graph({600.f,139.f,554.f,33.f},0,6);
+    graph({1210.f,139.f,276.f,33.f},1,1);
     g.setColour(ink.withAlpha(.6f));g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{57,75,240,12},juce::Justification::left);
     g.drawText(processor.sampleFileName(),juce::Rectangle<int>{342,103,206,21},juce::Justification::centredRight);
