@@ -46,6 +46,8 @@ private:
     juce::TextButton browse{"LOAD AUDIO"};
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> waveformRect;
+    std::vector<float> cachedPeaks;
+    juce::String cachedSampleFile;
     bool draggingLoopStart=false;
     void addDial(const char* id,const char* title,juce::Rectangle<int> bounds);
     void addSwitch(const char* id,const char* title,juce::Rectangle<int> bounds);
@@ -55,6 +57,6 @@ private:
     void paintWaveform(juce::Graphics&);
     void browseForAudio();
     void setLoopMarker(float frac,bool start);
-    void timerCallback() override { repaint(waveformRect.expanded(2)); }
+    void timerCallback() override { repaint(); }
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AerytherAudioProcessorEditor)
 };
