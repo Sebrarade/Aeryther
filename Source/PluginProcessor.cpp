@@ -201,29 +201,40 @@ void AerytherAudioProcessor::LayerFilter::process(juce::AudioBuffer<float>& b,in
 }
 
 void AerytherAudioProcessor::makeImpulseResponses(double sr,int maxBlock) {
+    // Original slow-blooming colour-shaped IRs, NOT borrowed presets.
+    constexpr double durations[4] = {11.0,8.5,13.5,10.5};
+    constexpr float smooth[4] = {.055f,.10f,.032f,.012f};
     for(int mode=0;mode<4;++mode) {
         auto& conv=convolutions[size_t(mode)];
         conv.prepare({sr,juce::uint32(maxBlock),2});
-        const double duration=mode==3?6.0:mode==2?4.5:mode==1?4.0:5.0;
-        auto length=int(sr*duration);
-        juce::AudioBuffer<float> ir(2,length);
-        std::mt19937 random(uint32_t(0xAEA7 + mode*179));
-        std::uniform_real_distribution<float> dist(-1.f,1.f);
-        for(int ch=0;ch<2;++ch) {
-            float low=0; auto* p=ir.getWritePointer(ch);
-            for(int i=0;i<length;++i) {
-                double t=double(i)/sr, fade=std::sin(juce::jmin(1.0,t/0.13)*juce::MathConstants<double>::halfPi);
-                double fall=std::exp(-t/(duration*(mode==3?0.30:0.41)));
-                float noise=dist(random); float smoothing=mode==3?0.02f:mode==1?0.085f:0.16f;
-                low+=smoothing*(noise-low);
-                double shimmer=mode==2?std::sin(2*juce::MathConstants<double>::pi*float(420.0+ch*7)*t):0;
-                p[i]=float(fall*fade*(low*0.9+noise*0.055+shimmer*0.018));
+        const double dur=durations[mode];
+        const int count=int(sr*dur);
+        juce::AudioBuffer<float> ir(2,count);
+        std::mt19937 rng(uint32_t(0xAEA7 + mode*179));
+        std::uniform_real_distribution<float> noise(-1.f,1.f);
+        for(int ch=0;ch<2;++ch){
+            auto* ptr=ir.getWritePointer(ch);
+            float tone=0.f,dark=0.f,dc=0.f;
+            for(int i=0;i<count;++i) {
+                const double t=double(i)/sr;
+                const double bloom=std::pow(std::sin(juce::MathConstants<double>::halfPi*
+                    juce::jmin(1.0,t/(mode==2?.31:.17))),2.0);
+                const double fall=std::exp(-6.9077553*t/dur);
+                const float white=noise(rng);
+                tone+=smooth[mode]*(white-tone);
+                dark+=(mode==3?.004f:.026f)*(white-dark);
+                dc+=.00015f*(white-dc);
+                const float movement=.84f+.16f*std::sin(2*pi*(.093f*float(t)+.31f*ch));
+                const float color=mode==3?(dark*.94f+tone*.18f):
+                    mode==2?(tone*.78f+dark*.35f+.017f*white):
+                    mode==1?(tone*.58f+dark*.34f+.05f*white):
+                            (tone*.90f+.035f*white);
+                ptr[i]=float(fall*bloom)*movement*(color-dc*.08f);
             }
-            p[0]=0.0f; // suppress dry transient, IR is intentionally diffuse
+            ptr[0]=0.f;
         }
         conv.loadImpulseResponse(std::move(ir),sr,juce::dsp::Convolution::Stereo::yes,
-                                 juce::dsp::Convolution::Trim::no,
-                                 juce::dsp::Convolution::Normalise::yes);
+                juce::dsp::Convolution::Trim::no,juce::dsp::Convolution::Normalise::yes);
     }
 }
 
@@ -403,6 +414,11 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
                 if(weight>0.001)out.addSample(ch,i,float(sum/weight)*gain);
             }
         }
+        const double beat=ppq+double(first+length)*hostBpm/(60.0*currentSampleRate);
+        const double pos=aeryther::sampleReadPosition(beat,srcBpm*get("stretch"),data->rate,
+                       double(start),double(end),dir);
+        playbackFraction.store(float((pos-double(start))/loopSize),std::memory_order_relaxed);
+        playbackActive.store(true,std::memory_order_relaxed);
     } else {
         // Independent MIDI notes: note pitch and time stretch are decoupled by
         // overlapping grains. The note-on point always starts at the selected region.
@@ -434,6 +450,16 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
                 v.samplePosition+=1;
             }
         }
+        bool active=false;
+        for(const auto& v:sampleVoices){
+            if(v.active){
+                playbackFraction.store(float(aeryther::wrapped(v.samplePosition*sourcePerOutput,loopSize)/loopSize),
+                                     std::memory_order_relaxed);
+                active=true;
+                break;
+            }
+        }
+        playbackActive.store(active,std::memory_order_relaxed);
     }
 }
 
@@ -508,6 +534,8 @@ void AerytherAudioProcessor::processBlock(juce::AudioBuffer<float>& output,juce:
         hostSamples=pos->getTimeInSamples().orFallback(hostSamples);
     }
     const auto sampleMode = aeryther::samplePlaybackMode(enabled("loopPlay"), playing);
+    if(sampleMode==aeryther::SamplePlaybackMode::Silent)
+        playbackActive.store(false,std::memory_order_relaxed);
     bool loop=(sampleMode == aeryther::SamplePlaybackMode::HostLoop);
     // MIDI event sample offsets are honored; transport looping follows the host's absolute timeline.
     double lfo[2]{};
