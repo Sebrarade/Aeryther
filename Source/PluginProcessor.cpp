@@ -488,9 +488,10 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
         const int grainLength=juce::jmax(64,int(currentSampleRate*(0.035+get("crossfade")*0.55)));
         const int hop=juce::jmax(1,grainLength/2);
         const double sourcePerOutput=data->rate/currentSampleRate;
-        const double stretch=get("stretch");
+        // Stretch is shared by host looping and MIDI-triggered playback.
         for(auto& v:sampleVoices)if(v.active) {
-            const double pitch=std::pow(2.0,(v.note-get("root")+get("sampleFine")/100.0)/12.0);
+            const double pitch=std::pow(2.0,(v.note-get("root")+get("sampleFine")/100.0+
+                 modulated("samplePitch",0.f,lfo1,lfo2))/12.0);
             const double noteTotalOutputFrames=loopSize/sourcePerOutput*stretch;
             for(int i=first;i<first+length;++i){
                 auto amp=v.envelope.getNextSample();
@@ -540,15 +541,19 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
         if(param("Filter")){
             float originalCutoff=get("cutoff");
             float cutoff=clampf(originalCutoff*std::pow(2.0f,modulated("cutoff",0,lfo1,lfo2)*4.0f),30,18000);
-            layerFilters[size_t(layer)].process(b,int(get("filterType")),cutoff,get("resonance"),
-                                                get("drive"),get("filterMix"),currentSampleRate);
+            layerFilters[size_t(layer)].process(b,int(get("filterType")),cutoff,
+                 clampf(modulated("resonance",get("resonance"),lfo1,lfo2),0.05f,0.95f),
+                 clampf(modulated("drive",get("drive"),lfo1,lfo2),0.f,1.f),
+                 clampf(modulated("filterMix",get("filterMix"),lfo1,lfo2),0.f,1.f),
+                 currentSampleRate);
         }
         if(param("Delay")) {
             wetScratch.makeCopyOf(b,true);
-            layerDelays[size_t(layer)].process(wetScratch,get("delayTime"),
+            layerDelays[size_t(layer)].process(wetScratch,
+                clampf(modulated("delayTime",get("delayTime"),lfo1,lfo2),0.04f,1.8f),
                 clampf(modulated("delayFeedback",get("delayFeedback"),lfo1,lfo2),0,0.94f),
                 currentSampleRate,enabled("pingPong"));
-            const float mix=clampf(get("delayMix"),0.f,1.f);
+            const float mix=clampf(modulated("delayMix",get("delayMix"),lfo1,lfo2),0.f,1.f);
             for(int ch=0;ch<2;++ch){
                 b.applyGain(ch,0,samples,1.f-mix);
                 b.addFrom(ch,0,wetScratch,ch,0,samples,mix);
@@ -570,8 +575,8 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
         }
     }
     wetScratch.makeCopyOf(processed,true);
-    reverb.process(wetScratch,get("reverbDecay"));
-    float rv=get("reverbMix");
+    reverb.process(wetScratch,clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f));
+    float rv=clampf(modulated("reverbMix",get("reverbMix"),lfo1,lfo2),0.f,1.f);
     for(int ch=0;ch<2;++ch) {
         for(int i=0;i<samples;++i)
             output.addSample(ch,i,aeryther::wetDry(processed.getSample(ch,i),wetScratch.getSample(ch,i),rv));
@@ -603,12 +608,17 @@ void AerytherAudioProcessor::processBlock(juce::AudioBuffer<float>& output,juce:
     // MIDI event sample offsets are honored; transport looping follows the host's absolute timeline.
     double lfo[2]{};
     for(int k=0;k<2;++k) {
-        auto rate=get(k==0?"lfo1Rate":"lfo2Rate");
-        int shape=int(get(k==0?"lfo1Shape":"lfo2Shape"));
-        auto phase=lfoPhases[k];
+        const float rate=get(k==0?"lfo1Rate":"lfo2Rate");
+        const int shape=int(get(k==0?"lfo1Shape":"lfo2Shape"));
+        const bool sync=enabled(k==0?"lfo1Sync":"lfo2Sync");
+        const int division=juce::jlimit(0,8,int(get(k==0?"lfo1Division":"lfo2Division")));
+        static constexpr double beatsPerCycle[]{16.,8.,4.,2.,1.,0.5,0.25,0.125,0.0625};
+        // Tempo-sync follows song PPQ so the LFO lands precisely on the host grid.
+        const double phase=sync?aeryther::wrapped(ppq/beatsPerCycle[division],1.0)
+                               :lfoPhases[k];
         lfo[k]=(shape==0?std::sin(2*pi*phase):shape==1?4*std::abs(phase-0.5)-1:
                 shape==2?2*phase-1:phase<0.5?1:-1)*get(k==0?"lfo1Depth":"lfo2Depth");
-        lfoPhases[k]=aeryther::wrapped(phase+rate*num/currentSampleRate,1.0);
+        if(!sync) lfoPhases[k]=aeryther::wrapped(phase+rate*num/currentSampleRate,1.0);
     }
 #if !defined(AERYTHER_FX)
     int rendered=0;
@@ -616,14 +626,14 @@ void AerytherAudioProcessor::processBlock(juce::AudioBuffer<float>& output,juce:
         int offset=juce::jlimit(0,num,metadata.samplePosition);
         if(offset>rendered) {
             if(sampleMode != aeryther::SamplePlaybackMode::Silent)
-                renderSampler(layerAudio[0],rendered,offset-rendered,loop,ppq,hostBpm,hostSamples,get("sampleBpm"));
+                renderSampler(layerAudio[0],rendered,offset-rendered,loop,ppq,hostBpm,hostSamples,get("sampleBpm"),float(lfo[0]),float(lfo[1]));
             renderOscillators(layerAudio[1],layerAudio[2],rendered,offset-rendered,float(lfo[0]),float(lfo[1]));
         }
         handleMidi(metadata.getMessage());rendered=offset;
     }
     if(rendered<num) {
         if(sampleMode != aeryther::SamplePlaybackMode::Silent)
-            renderSampler(layerAudio[0],rendered,num-rendered,loop,ppq,hostBpm,hostSamples,get("sampleBpm"));
+            renderSampler(layerAudio[0],rendered,num-rendered,loop,ppq,hostBpm,hostSamples,get("sampleBpm"),float(lfo[0]),float(lfo[1]));
         renderOscillators(layerAudio[1],layerAudio[2],rendered,num-rendered,float(lfo[0]),float(lfo[1]));
     }
 #endif
