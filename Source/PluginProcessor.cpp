@@ -387,26 +387,34 @@ float AerytherAudioProcessor::modulated(const char* destination,float original,f
 
 void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce::AudioBuffer<float>& sub,
                                                   int first,int length,float lfo1,float lfo2) {
-    const int shape=int(get("waveShape")),unison=int(get("unison"));
+    const int shape=juce::jlimit(0,8,int(get("waveShape")));
+    const int unison=juce::jlimit(1,8,int(get("unison")));
     const float dt=clampf(modulated("detune",get("detune"),lfo1,lfo2),0,100);
     const float width=clampf(modulated("width",get("width"),lfo1,lfo2),0,1);
-    const auto gain=juce::Decibels::decibelsToGain(get("waveLevel"))*0.2f;
+    const float level=clampf(modulated("waveLevel",get("waveLevel"),lfo1,lfo2),-60,6);
+    const auto gain=juce::Decibels::decibelsToGain(level)*0.2f;
+    const double glideSeconds=double(get("waveGlide"));
+    const double glideStep=glideSeconds>0.0005 ?
+        1.0-std::exp(-1.0/(currentSampleRate*glideSeconds)):1.0;
+    const double pitchOffset=double(get("waveFine"))/100.0+
+        double(modulated("wavePitch",0.f,lfo1,lfo2));
     for(auto& v:waveVoices)if(v.active) {
-        const double note=double(v.note)+12.0*get("waveOctave");
         for(int i=first;i<first+length;++i) {
             float amp=v.envelope.getNextSample();
             if(!v.envelope.isActive()){v.active=false;break;}
+            v.glidePitch += (double(v.note)-v.glidePitch)*glideStep;
+            const double note=v.glidePitch+12.0*get("waveOctave")+pitchOffset;
             float left=0,right=0;
             for(int u=0;u<unison;++u) {
-                double spread=unison>1?(double(u)/(unison-1)*2.0-1.0):0.0;
-                double f=midiHz(note+spread*dt*0.0045);
-                auto& phase=v.phases[size_t(u)];phase+=f/currentSampleRate;
-                if(phase>=1)phase-=std::floor(phase);
-                double s=shape==0?std::sin(phase*2*pi):
-                        shape==1?4.0*std::abs(phase-0.5)-1.0:
-                        shape==2?2.0*phase-1.0:(phase<0.5?1.0:-1.0);
-                double pan=spread*width;
-                left+=float(s*(1.0-pan)*0.5);right+=float(s*(1.0+pan)*0.5);
+                const double spread=unison>1?(double(u)/(unison-1)*2.0-1.0):0.0;
+                const double freq=double(midiHz(note+spread*dt*0.0045));
+                const double step=juce::jmin(0.49,freq/currentSampleRate);
+                auto& phase=v.phases[size_t(u)]; phase+=step;
+                if(phase>=1.0)phase-=std::floor(phase);
+                const double value=oscWave(shape,phase,step);
+                const double pan=spread*width;
+                left+=float(value*(1.0-pan)*0.5);
+                right+=float(value*(1.0+pan)*0.5);
             }
             w.addSample(0,i,left*amp*gain/unison);
             w.addSample(1,i,right*amp*gain/unison);
@@ -414,10 +422,11 @@ void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce:
     }
     int lowest=-1;
     for(int n=0;n<128;++n)if(heldNotes[size_t(n)]){lowest=n;break;}
-    const auto sg=juce::Decibels::decibelsToGain(get("subLevel"))*0.35f;
+    const auto sg=juce::Decibels::decibelsToGain(clampf(modulated("subLevel",get("subLevel"),lfo1,lfo2),-60,6))*0.35f;
     for(int i=first;i<first+length;++i) {
         if(lowest<0)continue;
-        double n=lowest+12.0*get("subOctave")+get("subTune")/100.0;
+        double n=lowest+12.0*get("subOctave")+get("subTune")/100.0+
+                 modulated("subPitch",0.f,lfo1,lfo2);
         subPhases[0]+=midiHz(n)/currentSampleRate;
         if(subPhases[0]>=1)subPhases[0]-=std::floor(subPhases[0]);
         double s=int(get("subShape"))==0?std::sin(2*pi*subPhases[0]):
@@ -428,14 +437,16 @@ void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce:
 
 void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int first,int length,
                                              bool looping,double ppq,double hostBpm,
-                                             int64_t sampleTime,double srcBpm) {
+                                             int64_t sampleTime,double srcBpm,float lfo1,float lfo2) {
     auto data=std::atomic_load(&sample);
     if(!data || data->samples.getNumSamples()<2)return;
     int total=data->samples.getNumSamples();
     int start=juce::jlimit(0,total-2,int(get("loopStart")*(total-1)));
     int end=juce::jlimit(start+2,total,int(get("loopEnd")*total));
     double loopSize=double(end-start);
-    auto gain=juce::Decibels::decibelsToGain(get("sampleLevel"));
+    auto gain=juce::Decibels::decibelsToGain(
+        clampf(modulated("sampleLevel",get("sampleLevel"),lfo1,lfo2),-60,6));
+    const float stretch=clampf(modulated("stretch",get("stretch"),lfo1,lfo2),0.25f,4.f);
     auto dir=int(get("direction"));
     if(looping) {
         // 50%-overlapped Hann grains: playhead anchor follows host beats, while the
@@ -453,7 +464,7 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
                     double offset=positionInHost-double(anchor);
                     if(offset<0 || offset>=grainLength)continue;
                     double ppqAtAnchor=ppq+(double(anchor)-double(sampleTime))*hostBpm/(60.0*currentSampleRate);
-                    double head=ppqAtAnchor*60.0/(srcBpm*get("stretch"))*data->rate;
+                    double head=ppqAtAnchor*60.0/(srcBpm*stretch)*data->rate;
                     double play=head+offset*data->rate/currentSampleRate;
                     double x=aeryther::wrapped(play,loopSize);
                     double samplePos=dir==1 ? end-1-x : dir==2 ?
@@ -467,7 +478,7 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
             }
         }
         const double beat=ppq+double(first+length)*hostBpm/(60.0*currentSampleRate);
-        const double pos=aeryther::sampleReadPosition(beat,srcBpm*get("stretch"),data->rate,
+        const double pos=aeryther::sampleReadPosition(beat,srcBpm*stretch,data->rate,
                        double(start),double(end),dir);
         playbackFraction.store(float((pos-double(start))/loopSize),std::memory_order_relaxed);
         playbackActive.store(true,std::memory_order_relaxed);
