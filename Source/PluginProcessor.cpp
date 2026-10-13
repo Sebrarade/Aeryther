@@ -37,9 +37,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     f("root","Root Note",0,127,60,1); f("sampleFine","Sample Fine",-100,100,0,1);
     f("stretch","Stretch",0.25,4,1); f("crossfade","Crossfade",0,0.5,0.08);
     f("sampleLevel","Sample Level",-60,6,0,0.1);
-    c("waveShape","Wave",{"Sine","Triangle","Saw","Square"},2);
+    c("waveShape","Wave",{"Sine","Triangle","Saw","Square","Pulse 25%","Soft Saw","Double Saw","Sine + Saw","Digital"},2);
     f("unison","Unison",1,8,1,1); f("detune","Detune",0,100,0); f("width","Width",0,1,0);
-    f("waveOctave","Wave Octave",-3,3,0,1); f("waveLevel","Wave Level",-60,6,0,0.1);
+    f("waveOctave","Wave Octave",-3,3,0,1); f("waveFine","Wave Fine",-100,100,0,1);
+    f("waveGlide","Portamento",0,3,0,0.001f); f("waveLevel","Wave Level",-60,6,0,0.1);
     c("subShape","Sub Wave",{"Sine","Triangle"},0);
     f("subOctave","Sub Octave",-3,0,-1,1); f("subTune","Sub Tune",-100,100,0,1);
     f("subLevel","Sub Level",-60,6,0,0.1);
@@ -62,6 +63,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
         f((pre+"Rate").toRawUTF8(),(pre+" Rate").toRawUTF8(),0.002f,12,0.1f);
         f((pre+"Depth").toRawUTF8(),(pre+" Depth").toRawUTF8(),0,1,0);
         c((pre+"Shape").toRawUTF8(),(pre+" Shape").toRawUTF8(),{"Sine","Triangle","Saw","Square"},0);
+        b((pre+"Sync").toRawUTF8(),(pre+" Tempo Sync").toRawUTF8(),false);
+        c((pre+"Division").toRawUTF8(),(pre+" Division").toRawUTF8(),
+          {"4 Bars","2 Bars","1 Bar","1/2","1/4","1/8","1/16","1/32","1/64"},4);
     }
     c("filterType","Filter Type",{"Low Pass","High Pass","Band Pass","Notch","Comb"},0);
     f("cutoff","Cutoff",30,18000,1200); f("resonance","Resonance",0.05f,0.95f,0.15f);
@@ -73,14 +77,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     f("convMix","Convolver Mix",0,1,1);
     f("reverbDecay","Reverb Decay",0.5f,60,60);
     f("reverbMix","Reverb Mix",0,1,1);
-    c("mod1Source","Mod 1 Source",{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"},1);
-    c("mod2Source","Mod 2 Source",{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"},2);
-    c("mod3Source","Mod 3 Source",{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"},0);
-    c("mod4Source","Mod 4 Source",{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"},0);
+    const juce::StringArray sources{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"};
+    const juce::StringArray targets{
+        "Off","Filter Cutoff","Filter Resonance","Filter Drive","Filter Mix",
+        "Wave Detune","Wave Width","Wave Pitch","Wave Level",
+        "Sub Pitch","Sub Level","Sample Pitch","Sample Stretch","Sample Level",
+        "Delay Time","Delay Feedback","Delay Mix",
+        "Convolver Mix","Reverb Decay","Reverb Mix"
+    };
     for(int i=1;i<=4;++i) {
-        auto s="mod"+juce::String(i);
-        c((s+"Target").toRawUTF8(),(s+" Target").toRawUTF8(),{"Off","Cutoff","Wave Detune","Wave Width","Delay Feedback","Convolver Mix"},0);
-        f((s+"Amount").toRawUTF8(),(s+" Amount").toRawUTF8(),-1,1,0);
+        auto prefix="mod"+juce::String(i);
+        c((prefix+"Source").toRawUTF8(),(prefix+" Source").toRawUTF8(),sources,i==1?1:i==2?2:0);
+        c((prefix+"Target").toRawUTF8(),(prefix+" Target").toRawUTF8(),targets,0);
+        f((prefix+"Amount").toRawUTF8(),(prefix+" Amount").toRawUTF8(),-1,1,0);
     }
     return {p.begin(),p.end()};
 }
