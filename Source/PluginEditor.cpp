@@ -89,9 +89,10 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addSwitch("loopPlay","LOOP PLAY",{54,247,112,31});
     addDial("sampleBpm","BPM",{175,238,66,67});
     addChoice("direction",{260,248,270,28});
-    auto waveKnobs=std::array<const char*,5>{"unison","detune","width","waveOctave","waveLevel"};
-    auto waveLabels=std::array<const char*,5>{"UNISON","DETUNE","WIDTH","OCTAVE","LEVEL"};
-    for(int i=0;i<5;++i)addDial(waveKnobs[i],waveLabels[i],{606+i*110,292,72,80});
+    auto waveKnobs=std::array<const char*,7>{"unison","detune","width","waveOctave","waveFine","waveGlide","waveLevel"};
+    auto waveLabels=std::array<const char*,7>{"UNISON","DETUNE","WIDTH","OCTAVE","FINE","GLIDE","LEVEL"};
+    // Seven evenly spaced controls fit entirely inside WAVE (576..1185).
+    for(int i=0;i<7;++i)addDial(waveKnobs[i],waveLabels[i],{592+i*82,292,70,80});
     addChoice("waveShape",{705,180,215,30});
     addChoice("subShape",{1275,180,185,30});
     for(int i=0;i<3;++i){const char* ids[]={"subOctave","subTune","subLevel"};
@@ -115,9 +116,13 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     for(int j=0;j<2;++j){
         int xx=840+j*343;
         juce::String prefix=j==0?"lfo1":"lfo2";
-        addDial((prefix+"Rate").toRawUTF8(),"RATE",{xx,526,68,76});
+        addDial((prefix+"Rate").toRawUTF8(),"FREE RATE",{xx,526,68,76});
         addDial((prefix+"Depth").toRawUTF8(),"DEPTH",{xx+100,526,68,76});
-        addChoice((prefix+"Shape").toRawUTF8(),{xx+175,544,137,28});
+        // First row: waveform and SYNC toggle. Second row: musical division.
+        // No control overlaps the envelope/LFO panels or rotary labels.
+        addChoice((prefix+"Shape").toRawUTF8(),{xx+110,484,140,28});
+        addSwitch((prefix+"Sync").toRawUTF8(),"SYNC",{xx+261,484,60,28});
+        addChoice((prefix+"Division").toRawUTF8(),{xx+200,544,112,28});
     }
     for(int i=1;i<=4;++i){
         juce::String prefix="mod"+juce::String(i);
@@ -228,7 +233,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.2.1",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.0",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,235},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
@@ -239,7 +244,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setFont(juce::FontOptions(13.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.2.1",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.0",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
