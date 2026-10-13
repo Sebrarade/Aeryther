@@ -31,9 +31,11 @@ class AerytherSpaciousReverb {
     std::array<Line,8> lines;
     std::array<Allpass,6> diffusion;
     double sr = 44100.0;
+    std::array<float,2> wetLow{}; // state of smooth output high-shelf tone EQ
 public:
     void prepare(double sampleRate) {
         sr = sampleRate;
+        wetLow.fill(0.f);
         constexpr double seconds[8] = {.0413,.0479,.0537,.0611,.0697,.0793,.0917,.1051};
         constexpr double modulation[8] = {.103,.137,.081,.159,.112,.073,.127,.093};
         constexpr double diffuserLength[6] = {.0091,.0127,.0181,.0107,.0157,.0211};
@@ -52,9 +54,15 @@ public:
             d.write=0;
         }
     }
-    void process(juce::AudioBuffer<float>& audio,float decay) noexcept {
+    // TONE: 0 = dark / -8 dB shelf, 0.5 = flat, 1 = bright / +8 dB shelf.
+    // The default 0.72 brightens the tail without altering its stereo diffusion.
+    void process(juce::AudioBuffer<float>& audio,float decay,float tone) noexcept {
         const float rt60=juce::jlimit(.5f,60.f,decay);
-        const float lowPass = 1.f-std::exp(-2.f*juce::MathConstants<float>::pi*6800.f/float(sr));
+        const float brightness=juce::jlimit(0.f,1.f,tone);
+        const float dampingCutoff=3800.f+11500.f*brightness;
+        const float lowPass=1.f-std::exp(-2.f*juce::MathConstants<float>::pi*dampingCutoff/float(sr));
+        const float tiltGain=juce::Decibels::decibelsToGain((brightness-.5f)*16.f);
+        const float highPassCoefficient=1.f-std::exp(-2.f*juce::MathConstants<float>::pi*1600.f/float(sr));
         for(int i=0;i<audio.getNumSamples();++i) {
             float l=audio.getSample(0,i),r=audio.getSample(1,i);
             for(int k=0;k<3;++k) {
@@ -93,8 +101,14 @@ public:
                 d.samples[size_t(d.write)]=((k&1)?r:l)*.21f+std::tanh(g*d.damped);
                 if(++d.write>=int(d.samples.size()))d.write=0;
             }
-            audio.setSample(0,i,(y[0]+y[2]-y[4]+y[6]-y[1]-y[7])*.23f);
-            audio.setSample(1,i,(y[1]+y[3]-y[5]+y[7]-y[0]-y[6])*.23f);
+            // One-pole crossover for a smooth, no-click high-frequency shelf
+            // applied only to the reverb tail (the dry path remains untouched).
+            const float outputL=(y[0]+y[2]-y[4]+y[6]-y[1]-y[7])*.23f;
+            const float outputR=(y[1]+y[3]-y[5]+y[7]-y[0]-y[6])*.23f;
+            wetLow[0]+=highPassCoefficient*(outputL-wetLow[0]);
+            wetLow[1]+=highPassCoefficient*(outputR-wetLow[1]);
+            audio.setSample(0,i,wetLow[0]+tiltGain*(outputL-wetLow[0]));
+            audio.setSample(1,i,wetLow[1]+tiltGain*(outputR-wetLow[1]));
         }
     }
 };
