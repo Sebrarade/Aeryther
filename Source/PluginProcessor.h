@@ -103,6 +103,7 @@ private:
     double currentSampleRate = 44100.0;
     int blockCapacity = 0;
     double subCurrentNote = -1;
+    float subEnvelopeLevel = 0.0f; // sample-accurate anti-click fade for note-on/off
     double lastWaveNote = -1.0;
     double lfoPhases[2] {0.0, 0.0};
     uint64_t transportFrameCounter = 0;
