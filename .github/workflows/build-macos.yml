@@ -29,3 +29,26 @@ jobs:
           name: Aeryther-macOS-beta-unsigned
           path: dist/
           if-no-files-found: error
+
+  validate:
+    name: pluginval VST3 compatibility
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Aeryther-macOS-beta-unsigned
+          path: beta
+      - name: Download pluginval
+        run: |
+          curl -fLsS "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip" -o pluginval.zip
+          unzip -q pluginval.zip -d pluginval-dist
+          find pluginval-dist -type f -name pluginval
+      - name: Validate Instrument and FX
+        run: |
+          PV=$(find pluginval-dist -type f -name pluginval | head -1)
+          test -n "$PV"
+          chmod +x "$PV"
+          "$PV" --strictness-level 5 --skip-gui-tests --validate "beta/Aeryther.vst3"
+          "$PV" --strictness-level 5 --skip-gui-tests --validate "beta/Aeryther FX.vst3"
