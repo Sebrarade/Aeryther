@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "Logic.h"
+#include "AerytherSpaciousReverb.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -44,6 +45,8 @@ public:
     bool loadSample(const juce::File& file);
     juce::String sampleFileName() const;
     std::vector<float> waveformPeaks(int columns) const;
+    float sampleReadhead() const noexcept {return playbackFraction.load(std::memory_order_relaxed);}
+    bool sampleHeadActive() const noexcept {return playbackActive.load(std::memory_order_relaxed);}
     juce::AudioProcessorValueTreeState state;
     static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout();
 
@@ -93,7 +96,7 @@ private:
     std::array<juce::AudioBuffer<float>, 3> layerAudio;
     juce::AudioBuffer<float> convInput, processed, convWet, wetScratch;
     std::array<juce::dsp::Convolution, 4> convolutions;
-    LongReverb reverb;
+    AerytherSpaciousReverb reverb;
     juce::ADSR filterEnvelope, amplitudeModEnvelope;
     float currentFilterEnv = 0.0f, currentAmpModEnv = 0.0f;
     double currentSampleRate = 44100.0;
@@ -101,6 +104,8 @@ private:
     double subCurrentNote = -1;
     double lfoPhases[2] {0.0, 0.0};
     uint64_t transportFrameCounter = 0;
+    std::atomic<float> playbackFraction{0.f};
+    std::atomic<bool> playbackActive{false};
 
     float get(const char* id) const;
     bool enabled(const char* id) const { return get(id) > 0.5f; }
