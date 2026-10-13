@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "HugeHallImpulse.h"
 #include <cmath>
 #include <random>
 
@@ -241,40 +242,27 @@ void AerytherAudioProcessor::LayerFilter::process(juce::AudioBuffer<float>& b,in
 }
 
 void AerytherAudioProcessor::makeImpulseResponses(double sr,int maxBlock) {
-    // Original slow-blooming colour-shaped IRs, NOT borrowed presets.
-    constexpr double durations[4] = {11.0,8.5,13.5,10.5};
-    constexpr float smooth[4] = {.055f,.10f,.032f,.012f};
+    // Colossal non-physical diffusion for experimental ambient resampling.
+    // The 34-54 second impulses are generated at up to 32kHz and JUCE's
+    // convolution engine resamples them to the host sample rate. This reduces
+    // both memory and prepare-time cost at 96/192kHz while preserving
+    // spacious stereo dynamics and a much longer bloom/tail.
+    const double impulseRate=juce::jmin(sr,32000.0);
     for(int mode=0;mode<4;++mode) {
         auto& conv=convolutions[size_t(mode)];
         conv.prepare({sr,juce::uint32(maxBlock),2});
-        const double dur=durations[mode];
-        const int count=int(sr*dur);
+        const auto profile=aeryther::hugeHallProfiles[size_t(mode)];
+        const int count=int(std::ceil(profile.durationSeconds*impulseRate));
         juce::AudioBuffer<float> ir(2,count);
-        std::mt19937 rng(uint32_t(0xAEA7 + mode*179));
-        std::uniform_real_distribution<float> noise(-1.f,1.f);
-        for(int ch=0;ch<2;++ch){
-            auto* ptr=ir.getWritePointer(ch);
-            float tone=0.f,dark=0.f,dc=0.f;
-            for(int i=0;i<count;++i) {
-                const double t=double(i)/sr;
-                const double bloom=std::pow(std::sin(juce::MathConstants<double>::halfPi*
-                    juce::jmin(1.0,t/(mode==2?.31:.17))),2.0);
-                const double fall=std::exp(-6.9077553*t/dur);
-                const float white=noise(rng);
-                tone+=smooth[mode]*(white-tone);
-                dark+=(mode==3?.004f:.026f)*(white-dark);
-                dc+=.00015f*(white-dc);
-                const float movement=.84f+.16f*std::sin(2*pi*(.093f*float(t)+.31f*ch));
-                const float color=mode==3?(dark*.94f+tone*.18f):
-                    mode==2?(tone*.78f+dark*.35f+.017f*white):
-                    mode==1?(tone*.58f+dark*.34f+.05f*white):
-                            (tone*.90f+.035f*white);
-                ptr[i]=float(fall*bloom)*movement*(color-dc*.08f);
-            }
-            ptr[0]=0.f;
+        for(int ch=0;ch<2;++ch) {
+            auto values=aeryther::generateHugeHallImpulse(mode,ch,impulseRate);
+            jassert(int(values.size())==count);
+            std::copy(values.begin(),values.end(),ir.getWritePointer(ch));
         }
-        conv.loadImpulseResponse(std::move(ir),sr,juce::dsp::Convolution::Stereo::yes,
-                juce::dsp::Convolution::Trim::no,juce::dsp::Convolution::Normalise::yes);
+        conv.loadImpulseResponse(std::move(ir),impulseRate,
+            juce::dsp::Convolution::Stereo::yes,
+            juce::dsp::Convolution::Trim::no,
+            juce::dsp::Convolution::Normalise::yes);
     }
 }
 
