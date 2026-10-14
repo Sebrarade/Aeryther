@@ -421,9 +421,9 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
                      juce::Justification::centredRight,1);
     for(int bank=0;bank<2;++bank){
         const int dx=bank*730;
-        g.drawText("SOURCE",juce::Rectangle<int>{100+dx,658,180,16},juce::Justification::left);
-        g.drawText("AMOUNT",juce::Rectangle<int>{305+dx,658,125,16},juce::Justification::left);
-        g.drawText("DESTINATION",juce::Rectangle<int>{452+dx,658,190,16},juce::Justification::left);
+        g.drawText("SOURCE",juce::Rectangle<int>{100+dx,662,180,16},juce::Justification::left);
+        g.drawText("AMOUNT",juce::Rectangle<int>{305+dx,662,125,16},juce::Justification::left);
+        g.drawText("DESTINATION",juce::Rectangle<int>{452+dx,662,190,16},juce::Justification::left);
     }
 #endif
 }
