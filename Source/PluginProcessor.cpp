@@ -179,7 +179,7 @@ void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,
     const double phaseStep=1.0/double(grain);
     const float slew=1.f-std::exp(-1.f/float(sr*0.025));
     const float amount=juce::jlimit(0.f,1.f,shimmer);
-    const int top=juce::jlimit(2,3,maxOctaves);
+    const int top=aeryther::shimmerOctaveCeiling(maxOctaves);
     auto pitchRead=[&](int stage,int channel,double position)->float {
         while(position<0.)position+=pn;
         while(position>=pn)position-=pn;
