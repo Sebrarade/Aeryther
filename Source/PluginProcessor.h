@@ -65,14 +65,17 @@ private:
         double glidePitch = -1.0;
     };
     struct DelayLine {
-        std::array<std::vector<float>, 2> ring;
-        std::array<std::vector<float>, 2> pitchRing;
-        int cursor = 0, pitchCursor = 0;
-        double grainPhase = 0.0;
-        float shimmerSmoothed = 0.0f;
-        void prepare(int maximumSamples, double sampleRate);
-        void process(juce::AudioBuffer<float>& buffer, float seconds, float feedback,
-                     double sampleRate, bool pingPong, float shimmer);
+        // Four discrete echo levels: fundamental, +12, +24 and +36 semitones.
+        // Each level has its own feedback loop; the highest enabled level
+        // recirculates WITHOUT further pitch shifting, so pitch cannot run away.
+        std::array<std::array<std::vector<float>,2>,4> octaveRings;
+        std::array<std::array<std::vector<float>,2>,3> grainHistory;
+        int cursor=0, grainCursor=0;
+        double grainPhase=0.0;
+        float shimmerSmoothed=0.0f;
+        void prepare(int maximumSamples,double sampleRate);
+        void process(juce::AudioBuffer<float>& buffer,float seconds,float feedback,
+                     double sampleRate,bool pingPong,float shimmer,int maxOctaves);
     };
     struct LongReverb {
         struct Line { std::vector<float> samples; int head = 0; float damped = 0; };
