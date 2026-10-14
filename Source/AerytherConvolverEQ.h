@@ -54,9 +54,11 @@ public:
         configure(0,0,0);
     }
     void configure(float lows,float mids,float highs) noexcept {
-        shelf(bands[0],sampleRate,170.,lows,false);
+        // Three broad, audible bands rather than narrow corrections:
+        // 220Hz low shelf, 1.4kHz mid presence, 4.5kHz high shelf.
+        shelf(bands[0],sampleRate,220.,lows,false);
         peaking(bands[1],sampleRate,1400.,mids);
-        shelf(bands[2],sampleRate,5500.,highs,true);
+        shelf(bands[2],sampleRate,4500.,highs,true);
     }
     void process(juce::AudioBuffer<float>& audio) noexcept {
         for(int ch=0;ch<juce::jmin(2,audio.getNumChannels());++ch) {
