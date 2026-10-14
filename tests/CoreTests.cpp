@@ -43,6 +43,11 @@ int main() {
   assert(std::abs(tempoDelaySeconds(120.0,10)-1.0/6.0)<1.e-7);
   assert(std::abs(tempoDelaySeconds(60.0,0)-4.0)<1.e-7);
   assert(std::abs(tempoDelaySeconds(0.0,0)-8.0)<1.e-7);
+  // Reject invalid ceiling choices and never allow feedback above +3 octaves.
+  assert(shimmerOctaveCeiling(-1)==2);
+  assert(shimmerOctaveCeiling(2)==2);
+  assert(shimmerOctaveCeiling(3)==3);
+  assert(shimmerOctaveCeiling(99)==3);
   assert(std::abs(shimmerGrainWindow(0.f))<1.e-6f);
   assert(std::abs(shimmerGrainWindow(.5f)-1.f)<1.e-6f);
   for (int i=0;i<100;++i){
