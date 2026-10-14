@@ -630,9 +630,8 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
     // diffuse tail and caused a clear loudness dip at intermediate MIX values.
     // Constant-power crossfade plus moderate wet makeup compensates its lower
     // short-term energy. 100% wet remains true wet-only for sound design.
-    constexpr float halfPi=juce::MathConstants<float>::halfPi;
-    const float dryGain=std::cos(halfPi*rv);
-    const float wetGain=2.2f*std::sin(halfPi*rv);
+    const auto gains=aeryther::reverbGains(rv);
+    const float dryGain=gains.dry,wetGain=gains.wet;
     for(int ch=0;ch<2;++ch) {
         for(int i=0;i<samples;++i) {
             const float dry=processed.getSample(ch,i);
