@@ -57,6 +57,11 @@ inline double tempoDelaySeconds(double bpm,int division) noexcept {
     const double safeBpm=std::clamp(bpm,30.0,300.0);
     return 60.0*delayDivisionBeats(division)/safeBpm;
 }
+// Only these two stage limits can be selected: the pitch-shifted feedback
+// never creates content above the selected octave ceiling.
+inline int shimmerOctaveCeiling(int selected) noexcept {
+    return std::clamp(selected,2,3);
+}
 inline float shimmerGrainWindow(float phase) noexcept {
     constexpr float pi=3.14159265358979323846f;
     const float s=std::sin(pi*phase);
