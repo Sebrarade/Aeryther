@@ -116,10 +116,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     f("reverbTone","Reverb Tone",0,1,0.72f,0.001f);
     f("reverbMix","Reverb Mix",0,1,1);
     b("eqEnabled","EQ Enabled",true);
-    c("eqPosition","EQ Position",{"PRE CONV","POST CONV"},0);
-    f("eqLow","EQ Low dB",-12,12,0,0.1f);
-    f("eqMid","EQ Mid dB",-12,12,0,0.1f);
-    f("eqHigh","EQ High dB",-12,12,0,0.1f);
+    // POST by default provides immediate audible feedback when adjusting EQ.
+    // PRE still shapes the impulse excitation for evolving reverb colours.
+    c("eqPosition","EQ Position",{"PRE CONV","POST CONV"},1);
+    f("eqLow","EQ Low dB",-18,18,0,0.1f);
+    f("eqMid","EQ Mid dB",-18,18,0,0.1f);
+    f("eqHigh","EQ High dB",-18,18,0,0.1f);
     const juce::StringArray sources{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"};
     const juce::StringArray targets{
         "Off","Filter Cutoff","Filter Resonance","Filter Drive","Filter Mix",
@@ -460,7 +462,7 @@ float AerytherAudioProcessor::modulated(const char* destination,float original,f
         {"subPitch",12.f},{"subLevel",18.f},{"samplePitch",12.f},{"stretch",1.5f},
         {"sampleLevel",18.f},{"delayTime",0.75f},{"delayFeedback",0.5f},
         {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f},{"reverbTone",1.f},
-        {"eqLow",12.f},{"eqMid",12.f},{"eqHigh",12.f}
+        {"eqLow",18.f},{"eqMid",18.f},{"eqHigh",18.f}
     };
     for(int i=1;i<=8;++i) {
         const auto prefix="mod"+juce::String(i);
@@ -689,9 +691,9 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
     const int eqPos=juce::jlimit(0,1,int(get("eqPosition")));
     if(eqOn){
         convolverEQ.configure(
-            clampf(modulated("eqLow",get("eqLow"),lfo1,lfo2),-12.f,12.f),
-            clampf(modulated("eqMid",get("eqMid"),lfo1,lfo2),-12.f,12.f),
-            clampf(modulated("eqHigh",get("eqHigh"),lfo1,lfo2),-12.f,12.f));
+            clampf(modulated("eqLow",get("eqLow"),lfo1,lfo2),-18.f,18.f),
+            clampf(modulated("eqMid",get("eqMid"),lfo1,lfo2),-18.f,18.f),
+            clampf(modulated("eqHigh",get("eqHigh"),lfo1,lfo2),-18.f,18.f));
     }
     auto mode=juce::jlimit(0,3,int(get("convMode")));
     convWet.makeCopyOf(convInput,true);
@@ -701,7 +703,6 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
     juce::dsp::AudioBlock<float> block(convWet);
     juce::dsp::ProcessContextReplacing<float> context(block);
     convolutions[size_t(mode + (enabled("convReverse")?4:0))].process(context);
-    if(eqOn && eqPos==1)convolverEQ.process(convWet);
     float mix=clampf(modulated("convMix",get("convMix"),lfo1,lfo2),0,1);
     for(int ch=0;ch<2;++ch) {
         for(int i=0;i<samples;++i) {
@@ -709,6 +710,10 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
             processed.addSample(ch,i,aeryther::wetDry(dry,wet,mix));
         }
     }
+    // POST EQ acts on the actual audible convolver output, including its
+    // dry/wet blend. Unlike the prior post-only-wet path, dialing EQ gives
+    // an immediate audible response even if a reverse impulse is still blooming.
+    if(eqOn && eqPos==1)convolverEQ.process(processed);
     wetScratch.makeCopyOf(processed,true);
     reverb.process(wetScratch,
         clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f),
