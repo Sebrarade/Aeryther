@@ -66,10 +66,12 @@ private:
     };
     struct DelayLine {
         std::array<std::vector<float>, 2> ring;
-        int cursor = 0;
-        void prepare(int maximumSamples);
+        std::array<std::vector<float>, 2> pitchRing;
+        int cursor = 0, pitchCursor = 0;
+        double grainPhase = 0.0;
+        void prepare(int maximumSamples, double sampleRate);
         void process(juce::AudioBuffer<float>& buffer, float seconds, float feedback,
-                     double sampleRate, bool pingPong);
+                     double sampleRate, bool pingPong, float shimmer);
     };
     struct LongReverb {
         struct Line { std::vector<float> samples; int head = 0; float damped = 0; };
@@ -121,7 +123,8 @@ private:
     void renderSampler(juce::AudioBuffer<float>& dest, int start, int length,
                        bool loopPlaying, double hostPpq, double hostBpm,
                        int64_t hostSampleStart, double sourceBpm, float lfo1, float lfo2);
-    void applyRouting(juce::AudioBuffer<float>& output, int samples, float lfo1, float lfo2);
+    void applyRouting(juce::AudioBuffer<float>& output, int samples, float lfo1, float lfo2,
+                      double hostBpm);
     void handleMidi(const juce::MidiMessage& m);
     void makeImpulseResponses(double sampleRate, int maxBlock);
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AerytherAudioProcessor)
