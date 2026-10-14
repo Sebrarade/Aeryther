@@ -36,6 +36,14 @@ int main() {
   assert(std::abs(sampleReadPosition(2,120,48000,100,48100,2)-48100)<0.001);
   assert(sampleReadPosition(1,0,48000,0,48000,0)==0);
   assert(std::isfinite(wetDry(.4f,.2f,.5f)));
+  // Reverb 0% must preserve dry at unity, while intermediate positions use
+  // an equal-power fade instead of the old loudness-dropping linear blend.
+  assert(std::abs(reverbGains(0.f).dry-1.f)<0.00001f);
+  assert(std::abs(reverbGains(0.f).wet)<0.00001f);
+  assert(std::abs(reverbGains(1.f).dry)<0.00001f);
+  assert(std::abs(reverbGains(1.f).wet-2.2f)<0.00001f);
+  assert(reverbGains(.5f).dry>.70f && reverbGains(.5f).wet>1.55f);
+  assert(std::isfinite(reverbGains(.67f).wet));
   const auto energy=[](const std::vector<float>& audio,int a,int b) {
     const int from=std::clamp(a,0,int(audio.size()));
     const int end=std::clamp(b,from,int(audio.size()));
