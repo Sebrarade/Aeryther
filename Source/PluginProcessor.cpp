@@ -110,15 +110,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     f("reverbDecay","Reverb Decay",0.5f,60,60);
     f("reverbTone","Reverb Tone",0,1,0.72f,0.001f);
     f("reverbMix","Reverb Mix",0,1,1);
+    b("eqEnabled","EQ Enabled",true);
+    c("eqPosition","EQ Position",{"PRE CONV","POST CONV"},0);
+    f("eqLow","EQ Low dB",-12,12,0,0.1f);
+    f("eqMid","EQ Mid dB",-12,12,0,0.1f);
+    f("eqHigh","EQ High dB",-12,12,0,0.1f);
     const juce::StringArray sources{"Off","LFO 1","LFO 2","AMP ENV","FILTER ENV"};
     const juce::StringArray targets{
         "Off","Filter Cutoff","Filter Resonance","Filter Drive","Filter Mix",
         "Wave Detune","Wave Width","Wave Pitch","Wave Level",
         "Sub Pitch","Sub Level","Sample Pitch","Sample Stretch","Sample Level",
         "Delay Time","Delay Feedback","Delay Mix",
-        "Convolver Mix","Reverb Decay","Reverb Mix","Reverb Tone"
+        "Convolver Mix","Reverb Decay","Reverb Mix","Reverb Tone",
+        "EQ Low","EQ Mid","EQ High"
     };
-    for(int i=1;i<=4;++i) {
+    for(int i=1;i<=8;++i) {
         auto prefix="mod"+juce::String(i);
         c((prefix+"Source").toRawUTF8(),(prefix+" Source").toRawUTF8(),sources,i==1?1:i==2?2:0);
         c((prefix+"Target").toRawUTF8(),(prefix+" Target").toRawUTF8(),targets,0);
@@ -291,6 +297,7 @@ void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
     for(auto* b:{&convInput,&processed,&convWet,&wetScratch})b->setSize(2,blockCapacity);
     makeImpulseResponses(sr,blockCapacity);
     reverb.prepare(sr);
+    convolverEQ.prepare(sr);
     filterEnvelope.setSampleRate(sr);
     amplitudeModEnvelope.setSampleRate(sr);
     transportFrameCounter=0;
@@ -372,9 +379,10 @@ float AerytherAudioProcessor::modulated(const char* destination,float original,f
         {"detune",50.f},{"width",1.f},{"wavePitch",12.f},{"waveLevel",18.f},
         {"subPitch",12.f},{"subLevel",18.f},{"samplePitch",12.f},{"stretch",1.5f},
         {"sampleLevel",18.f},{"delayTime",0.75f},{"delayFeedback",0.5f},
-        {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f},{"reverbTone",1.f}
+        {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f},{"reverbTone",1.f},
+        {"eqLow",12.f},{"eqMid",12.f},{"eqHigh",12.f}
     };
-    for(int i=1;i<=4;++i) {
+    for(int i=1;i<=8;++i) {
         const auto prefix="mod"+juce::String(i);
         const int target=int(routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Target"));
         const int source=int(routedParam(const_cast<juce::AudioProcessorValueTreeState&>(state),prefix+"Source"));
@@ -589,11 +597,23 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
         auto& dest=param("Conv")?convInput:processed;
         for(int ch=0;ch<2;++ch)dest.addFrom(ch,0,b,ch,0,samples);
     }
+    // EQ applies only to the convolution path: before the impulse response,
+    // or to its wet result afterward. Dry/direct layers stay untouched.
+    const bool eqOn=enabled("eqEnabled");
+    const int eqPos=juce::jlimit(0,1,int(get("eqPosition")));
+    if(eqOn){
+        convolverEQ.configure(
+            clampf(modulated("eqLow",get("eqLow"),lfo1,lfo2),-12.f,12.f),
+            clampf(modulated("eqMid",get("eqMid"),lfo1,lfo2),-12.f,12.f),
+            clampf(modulated("eqHigh",get("eqHigh"),lfo1,lfo2),-12.f,12.f));
+        if(eqPos==0)convolverEQ.process(convInput);
+    }
     auto mode=juce::jlimit(0,3,int(get("convMode")));
     convWet.makeCopyOf(convInput,true);
     juce::dsp::AudioBlock<float> block(convWet);
     juce::dsp::ProcessContextReplacing<float> context(block);
     convolutions[size_t(mode + (enabled("convReverse")?4:0))].process(context);
+    if(eqOn && eqPos==1)convolverEQ.process(convWet);
     float mix=clampf(modulated("convMix",get("convMix"),lfo1,lfo2),0,1);
     for(int ch=0;ch<2;++ch) {
         for(int i=0;i<samples;++i) {
@@ -605,10 +625,20 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
     reverb.process(wetScratch,
         clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f),
         clampf(modulated("reverbTone",get("reverbTone"),lfo1,lfo2),0.f,1.f));
-    float rv=clampf(modulated("reverbMix",get("reverbMix"),lfo1,lfo2),0.f,1.f);
+    const float rv=clampf(modulated("reverbMix",get("reverbMix"),lfo1,lfo2),0.f,1.f);
+    // Previous linear interpolation replaced dry signal with a quieter
+    // diffuse tail and caused a clear loudness dip at intermediate MIX values.
+    // Constant-power crossfade plus moderate wet makeup compensates its lower
+    // short-term energy. 100% wet remains true wet-only for sound design.
+    constexpr float halfPi=juce::MathConstants<float>::halfPi;
+    const float dryGain=std::cos(halfPi*rv);
+    const float wetGain=2.2f*std::sin(halfPi*rv);
     for(int ch=0;ch<2;++ch) {
-        for(int i=0;i<samples;++i)
-            output.addSample(ch,i,aeryther::wetDry(processed.getSample(ch,i),wetScratch.getSample(ch,i),rv));
+        for(int i=0;i<samples;++i) {
+            const float dry=processed.getSample(ch,i);
+            const float wet=wetScratch.getSample(ch,i);
+            output.addSample(ch,i,dryGain*dry+wetGain*wet);
+        }
     }
 }
 
