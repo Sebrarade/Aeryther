@@ -57,11 +57,36 @@ void AerytherAudioProcessorEditor::LightLook::drawToggleButton(juce::Graphics& g
     g.setColour(b.getToggleState()?blue:border);g.drawRoundedRectangle(r,5,1);
     g.setColour(ink);g.setFont(12);g.drawFittedText(b.getButtonText(),b.getLocalBounds(),juce::Justification::centred,1);
 }
+void AerytherAudioProcessorEditor::LightLook::drawLinearSlider(
+    juce::Graphics& g,int x,int y,int width,int height,float sliderPos,
+    float,float,const juce::Slider::SliderStyle style,juce::Slider& slider) {
+    if(style!=juce::Slider::LinearHorizontal) {
+        juce::LookAndFeel_V4::drawLinearSlider(g,x,y,width,height,sliderPos,0.f,0.f,style,slider);
+        return;
+    }
+    // Bipolar modulation: deep blue centre line, blue level and small circular thumb.
+    const auto area=juce::Rectangle<float>{float(x),float(y),float(width),float(height)};
+    g.setColour(pale);
+    g.fillRoundedRectangle(area.reduced(0.f,2.f),5.f);
+    const float midX=area.getCentreX();
+    const float yMid=area.getCentreY();
+    g.setColour(border);
+    g.fillRoundedRectangle(area.getX()+6.f,yMid-2.f,area.getWidth()-12.f,4.f,2.f);
+    const float pos=juce::jlimit(area.getX()+7.f,area.getRight()-7.f,sliderPos);
+    g.setColour(blue.withAlpha(.9f));
+    if(std::abs(pos-midX)>1.f)
+        g.fillRoundedRectangle(juce::jmin(midX,pos),yMid-2.f,
+                               std::abs(midX-pos),4.f,2.f);
+    g.setColour(ink.withAlpha(.65f));
+    g.drawLine(midX,yMid-6.f,midX,yMid+6.f,1.f);
+    g.setColour(blue);
+    g.fillEllipse(pos-5.f,yMid-5.f,10.f,10.f);
+}
 AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcessor& p)
     :juce::AudioProcessorEditor(&p),processor(p){
     setLookAndFeel(&look);setOpaque(true);
 #if defined(AERYTHER_FX)
-    setSize(872,240);
+    setSize(872,350);
     // FX keeps only the processing controls; no sampler or MIDI layers.
     addSwitch("sampleFilter","FILTER ON",{55,80,140,32});
     addChoice("filterType",{54,124,195,28});
@@ -81,8 +106,14 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("reverbTone","TONE",{923,161,66,85});
     addDial("reverbMix","MIX",{999,161,66,85});
     addSwitch("sampleDirect","DIRECT",{640,258,140,30});
+    // Shared convolver EQ strip: EQ colour follows PRE / POST convolution.
+    addSwitch("eqEnabled","EQ ON",{49,346,114,32});
+    addChoice("eqPosition",{193,348,236,30});
+    addDial("eqLow","LOW",{488,334,92,82});
+    addDial("eqMid","MID",{637,334,92,82});
+    addDial("eqHigh","HIGH",{786,334,92,82});
 #else
-    setSize(1170,684);
+    setSize(1170,812);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
     // Top row: Sample (left), Wave (middle), Sub (right)
     // All SAMPLE dials share one row; BPM and ROOT get generous, readable
@@ -130,27 +161,36 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
         addSwitch((prefix+"Sync").toRawUTF8(),"SYNC",{xx+187,541,75,26});
         addChoice((prefix+"Division").toRawUTF8(),{xx+187,578,126,27});
     }
-    for(int i=1;i<=4;++i){
+    // Eight modulation assignments, arranged in two four-row banks.
+    // Every control is inside the MODULATION MATRIX card and clear of its title.
+    for(int i=1;i<=8;++i){
         juce::String prefix="mod"+juce::String(i);
-        int y=656+(i-1)*29;
-        addChoice((prefix+"Source").toRawUTF8(),{290,y,250,26});
-        addDial((prefix+"Amount").toRawUTF8(),"",{562,y,178,26});
-        addChoice((prefix+"Target").toRawUTF8(),{780,y,335,26});
+        const int bank=(i-1)/4, row=(i-1)%4;
+        const int y=681+row*24, dx=bank*730;
+        addChoice((prefix+"Source").toRawUTF8(),{100+dx,y,195,22});
+        addDial((prefix+"Amount").toRawUTF8(),"",{305+dx,y,134,22});
+        addChoice((prefix+"Target").toRawUTF8(),{452+dx,y,240,22});
     }
-    addChoice("filterType",{194,786,210,29});
+    addChoice("filterType",{194,805,210,29});
     for(int i=0;i<4;++i){const char* ids[]={"cutoff","resonance","drive","filterMix"};
         const char* names[]={"CUTOFF","RESONANCE","DRIVE","MIX"};
-        addDial(ids[i],names[i],{53+i*113,816,71,73});}
+        addDial(ids[i],names[i],{53+i*113,835,71,73});}
     for(int i=0;i<3;++i){const char* ids[]={"delayTime","delayFeedback","delayMix"};
         const char* names[]={"TIME","FEEDBACK","MIX"};
-        addDial(ids[i],names[i],{523+i*105,814,72,76});}
-    addSwitch("pingPong","PING-PONG",{729,780,112,30});
-    addChoice("convMode",{877,798,295,31});
-    addSwitch("convReverse","REVERSE",{1041,846,126,32});
-    addDial("convMix","MIX",{1228,808,72,82});
-    addDial("reverbDecay","DECAY",{1332,812,54,80});
-    addDial("reverbTone","TONE",{1394,812,54,80});
-    addDial("reverbMix","MIX",{1456,812,54,80});
+        addDial(ids[i],names[i],{523+i*105,833,72,76});}
+    addSwitch("pingPong","PING-PONG",{729,799,112,30});
+    addChoice("convMode",{877,830,295,29});
+    addSwitch("convReverse","REVERSE",{1041,866,126,30});
+    addDial("convMix","MIX",{1228,829,72,80});
+    addDial("reverbDecay","DECAY",{1332,831,54,80});
+    addDial("reverbTone","TONE",{1394,831,54,80});
+    addDial("reverbMix","MIX",{1456,831,54,80});
+    // Dedicated three-band EQ, physically separated from both FX and MOD matrix.
+    addSwitch("eqEnabled","EQ ON",{55,977,136,32});
+    addChoice("eqPosition",{216,979,231,30});
+    addDial("eqLow","LOW",{530,964,94,87});
+    addDial("eqMid","MID",{713,964,94,87});
+    addDial("eqHigh","HIGH",{896,964,94,87});
     refreshParameterReadouts();
     startTimerHz(24);
 #endif
@@ -324,18 +364,19 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.3.5",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.6",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,235},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
     panel(g,{832,56,238,235},"REVERB");
+    panel(g,{20,307,1050,119},"3 BAND EQ  /  CONVOLVER COLOUR");
 #else
     g.setColour(ink);g.setFont(juce::FontOptions(33.f));
     g.drawFittedText("AERYTHER",{500,6,540,45},juce::Justification::centred,1);
     g.setFont(juce::FontOptions(13.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.3.5",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.6",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
@@ -343,11 +384,12 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     panel(g,{441,463,390,157},"FILTER ENV");
     panel(g,{836,463,339,157},"LFO 1");
     panel(g,{1181,463,329,157},"LFO 2");
-    panel(g,{35,627,1475,142},"MODULATION MATRIX");
-    panel(g,{35,777,452,118},"FILTER");
-    panel(g,{493,777,350,118},"DELAY");
-    panel(g,{849,777,467,118},"CONVOLVER");
-    panel(g,{1322,777,188,118},"REVERB");
+    panel(g,{35,627,1475,155},"MODULATION MATRIX");
+    panel(g,{35,795,452,118},"FILTER");
+    panel(g,{493,795,350,118},"DELAY");
+    panel(g,{849,795,467,118},"CONVOLVER");
+    panel(g,{1322,795,188,118},"REVERB");
+    panel(g,{35,923,1475,134},"3 BAND EQ  /  CONVOLVER COLOUR");
     waveformRect={57,139,490,92};paintWaveform(g);
     // Minimal functional illustrations, drawn in JUCE rather than static imagery.
     auto graph=[&](juce::Rectangle<float> r, int kind, int traces){
@@ -377,9 +419,12 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.drawFittedText(processor.sampleFileName(),
                      juce::Rectangle<int>{206,105,185,21},
                      juce::Justification::centredRight,1);
-    g.drawText("SOURCE",juce::Rectangle<int>{210,638,65,16},juce::Justification::left);
-    g.drawText("AMOUNT",juce::Rectangle<int>{570,638,75,16},juce::Justification::left);
-    g.drawText("DESTINATION",juce::Rectangle<int>{785,638,145,16},juce::Justification::left);
+    for(int bank=0;bank<2;++bank){
+        const int dx=bank*730;
+        g.drawText("SOURCE",juce::Rectangle<int>{100+dx,658,180,16},juce::Justification::left);
+        g.drawText("AMOUNT",juce::Rectangle<int>{305+dx,658,125,16},juce::Justification::left);
+        g.drawText("DESTINATION",juce::Rectangle<int>{452+dx,658,190,16},juce::Justification::left);
+    }
 #endif
 }
 void AerytherAudioProcessorEditor::resized(){
