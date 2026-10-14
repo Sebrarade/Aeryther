@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "Logic.h"
 #include "AerytherSpaciousReverb.h"
+#include "AerytherConvolverEQ.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -99,6 +100,7 @@ private:
     // Four original hall modes, each with NORMAL and REVERSE impulse responses.
     std::array<juce::dsp::Convolution, 8> convolutions;
     AerytherSpaciousReverb reverb;
+    AerytherConvolverEQ convolverEQ;
     juce::ADSR filterEnvelope, amplitudeModEnvelope;
     float currentFilterEnv = 0.0f, currentAmpModEnv = 0.0f;
     double currentSampleRate = 44100.0;
