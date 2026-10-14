@@ -162,7 +162,7 @@ void AerytherAudioProcessor::DelayLine::prepare(int maximumSamples, double sr) {
     for(auto& r:ring)r.assign(size_t(maximumSamples),0.0f);
     const int pitchCount=juce::jmax(256,int(sr*0.21));
     for(auto& r:pitchRing)r.assign(size_t(pitchCount),0.0f);
-    cursor=0;pitchCursor=0;grainPhase=0.0;
+    cursor=0;pitchCursor=0;grainPhase=0.0;shimmerSmoothed=0.0f;
 }
 void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,float seconds,
                                                 float feedback,double sr,bool pingPong,float shimmer) {
@@ -190,9 +190,13 @@ void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,floa
         const float l=ring[0][size_t(read)],r=ring[1][size_t(read)];
         const float inl=b.getSample(0,i),inr=b.getSample(1,i);
         float outL=l,outR=r;
-        if(amount>0.0001f) {
-            pitchRing[0][size_t(pitchCursor)]=l;
-            pitchRing[1][size_t(pitchCursor)]=r;
+        // Keep source history warm even when shimmer is bypassed.
+        pitchRing[0][size_t(pitchCursor)]=l;
+        pitchRing[1][size_t(pitchCursor)]=r;
+        // Smooth controls in the audio stream to avoid toggling clicks.
+        const float slew=1.f-std::exp(-1.f/float(sr*0.025));
+        shimmerSmoothed+=(amount-shimmerSmoothed)*slew;
+        if(shimmerSmoothed>0.00001f) {
             const float phase1=float(grainPhase);
             const float phase2=std::fmod(phase1+0.5f,1.f);
             const float w1=aeryther::shimmerGrainWindow(phase1);
@@ -201,8 +205,8 @@ void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,floa
             const double off2=double(grain)*(1.0-double(phase2));
             const float shimmerL=w1*readPitch(0,off1)+w2*readPitch(0,off2);
             const float shimmerR=w1*readPitch(1,off1)+w2*readPitch(1,off2);
-            outL=l*(1.f-amount)+shimmerL*amount;
-            outR=r*(1.f-amount)+shimmerR*amount;
+            outL=l*(1.f-shimmerSmoothed)+shimmerL*shimmerSmoothed;
+            outR=r*(1.f-shimmerSmoothed)+shimmerR*shimmerSmoothed;
             grainPhase+=inc;
             if(grainPhase>=1.0)grainPhase-=1.0;
         } else {
