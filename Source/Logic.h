@@ -39,6 +39,14 @@ inline float wetDry(float dry, float wet, float mix) noexcept {
     const auto m = std::clamp(mix, 0.0f, 1.0f);
     return dry * (1.0f - m) + wet * m;
 }
+struct ReverbGains { float dry,wet; };
+// Equal-power mix plus 6.85dB tail gain compensation. 0% is exactly dry;
+// 100% is genuinely wet-only, preserving reverb-only sound design.
+inline ReverbGains reverbGains(float mix) noexcept {
+    constexpr float halfPi=1.57079632679489661923f;
+    const float m=std::clamp(mix,0.0f,1.0f);
+    return {std::cos(halfPi*m),2.2f*std::sin(halfPi*m)};
+}
 inline double wrapped(double position, double length) noexcept {
     if (length <= 0.0) return 0.0;
     const auto result = std::fmod(position, length);
