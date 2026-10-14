@@ -606,10 +606,12 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
             clampf(modulated("eqLow",get("eqLow"),lfo1,lfo2),-12.f,12.f),
             clampf(modulated("eqMid",get("eqMid"),lfo1,lfo2),-12.f,12.f),
             clampf(modulated("eqHigh",get("eqHigh"),lfo1,lfo2),-12.f,12.f));
-        if(eqPos==0)convolverEQ.process(convInput);
     }
     auto mode=juce::jlimit(0,3,int(get("convMode")));
     convWet.makeCopyOf(convInput,true);
+    // PRE shapes only the signal that enters convolution, not the bypass dry
+    // copy. POST shapes the convolution result; both leave other layers alone.
+    if(eqOn && eqPos==0)convolverEQ.process(convWet);
     juce::dsp::AudioBlock<float> block(convWet);
     juce::dsp::ProcessContextReplacing<float> context(block);
     convolutions[size_t(mode + (enabled("convReverse")?4:0))].process(context);
