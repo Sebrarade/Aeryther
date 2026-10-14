@@ -47,6 +47,21 @@ inline ReverbGains reverbGains(float mix) noexcept {
     const float m=std::clamp(mix,0.0f,1.0f);
     return {std::cos(halfPi*m),2.2f*std::sin(halfPi*m)};
 }
+// Number of quarter-note beats per delay subdivision.
+inline double delayDivisionBeats(int index) noexcept {
+    constexpr double beats[]{4.0,2.0,1.0,0.5,0.25,0.125,
+                              1.5,0.75,0.375,2.0/3.0,1.0/3.0,1.0/6.0};
+    return beats[std::clamp(index,0,11)];
+}
+inline double tempoDelaySeconds(double bpm,int division) noexcept {
+    const double safeBpm=std::clamp(bpm,30.0,300.0);
+    return 60.0*delayDivisionBeats(division)/safeBpm;
+}
+inline float shimmerGrainWindow(float phase) noexcept {
+    constexpr float pi=3.14159265358979323846f;
+    const float s=std::sin(pi*phase);
+    return s*s;
+}
 inline double wrapped(double position, double length) noexcept {
     if (length <= 0.0) return 0.0;
     const auto result = std::fmod(position, length);
