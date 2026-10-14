@@ -108,6 +108,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     c("delayDivision","Delay Note",{"1/1","1/2","1/4","1/8","1/16","1/32",
                                        "1/4 D","1/8 D","1/16 D","1/4 T","1/8 T","1/16 T"},2);
     f("delayShimmer","Octave Shimmer",0,1,0,0.001f);
+    c("shimmerMaxOctaves","Shimmer Ceiling",{"MAX +2 OCT","MAX +3 OCT"},0);
     c("convMode","Convolver",{"AUUU","CROSS","CATHOLIC","DARK"},0);
     b("convReverse","Reverse Impulse",true);
     f("convMix","Convolver Mix",0,1,1);
@@ -158,67 +159,96 @@ float AerytherAudioProcessor::get(const char* id) const {
     if (auto* v=state.getRawParameterValue(id))return v->load();return 0;
 }
 
-void AerytherAudioProcessor::DelayLine::prepare(int maximumSamples, double sr) {
-    for(auto& r:ring)r.assign(size_t(maximumSamples),0.0f);
+void AerytherAudioProcessor::DelayLine::prepare(int maximumSamples,double sr) {
+    for(auto& stage:octaveRings)
+        for(auto& channel:stage)channel.assign(size_t(maximumSamples),0.f);
     const int pitchCount=juce::jmax(256,int(sr*0.21));
-    for(auto& r:pitchRing)r.assign(size_t(pitchCount),0.0f);
-    cursor=0;pitchCursor=0;grainPhase=0.0;shimmerSmoothed=0.0f;
+    for(auto& stage:grainHistory)
+        for(auto& channel:stage)channel.assign(size_t(pitchCount),0.f);
+    cursor=0;grainCursor=0;grainPhase=0.0;shimmerSmoothed=0.f;
 }
-void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,float seconds,
-                                                float feedback,double sr,bool pingPong,float shimmer) {
-    if(ring[0].empty())return;
-    const int n=int(ring[0].size());
+void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,
+      float seconds,float feedback,double sr,bool pingPong,float shimmer,int maxOctaves) {
+    if(octaveRings[0][0].empty())return;
+    const int n=int(octaveRings[0][0].size());
     const int delay=juce::jlimit(1,n-1,int(seconds*sr));
-    const float amount=juce::jlimit(0.f,1.f,shimmer);
-    const int pn=int(pitchRing[0].size());
-    // Two Hann-windowed stereo heads, 180 degrees apart, scan the delayed
-    // feedback at twice normal rate. Only pitch-shifted repeats are recirculated.
-    // 80ms grains reduce the metallic artifacts of shorter granular windows.
+    const int pn=int(grainHistory[0][0].size());
     const int grain=juce::jlimit(32,pn/2,int(sr*0.08));
-    const double inc=1.0/double(grain);
-    auto readPitch=[&](int ch,double offset)->float {
-        double position=double(pitchCursor)-offset;
-        while(position<0.0)position+=pn;
+    const double phaseStep=1.0/double(grain);
+    const float slew=1.f-std::exp(-1.f/float(sr*0.025));
+    const float amount=juce::jlimit(0.f,1.f,shimmer);
+    const int top=juce::jlimit(2,3,maxOctaves);
+    auto pitchRead=[&](int stage,int channel,double position)->float {
+        while(position<0.)position+=pn;
         while(position>=pn)position-=pn;
         const int i0=int(position),i1=(i0+1)%pn;
-        const float frac=float(position-double(i0));
-        const auto& buffer=pitchRing[size_t(ch)];
-        return buffer[size_t(i0)]*(1.f-frac)+buffer[size_t(i1)]*frac;
+        const float mix=float(position-double(i0));
+        const auto& buf=grainHistory[size_t(stage)][size_t(channel)];
+        return buf[size_t(i0)]*(1.f-mix)+buf[size_t(i1)]*mix;
     };
     for(int i=0;i<b.getNumSamples();++i) {
         const int read=(cursor-delay+n)%n;
-        const float l=ring[0][size_t(read)],r=ring[1][size_t(read)];
-        const float inl=b.getSample(0,i),inr=b.getSample(1,i);
-        float outL=l,outR=r;
-        // Keep source history warm even when shimmer is bypassed.
-        pitchRing[0][size_t(pitchCursor)]=l;
-        pitchRing[1][size_t(pitchCursor)]=r;
-        // Smooth controls in the audio stream to avoid toggling clicks.
-        const float slew=1.f-std::exp(-1.f/float(sr*0.025));
         shimmerSmoothed+=(amount-shimmerSmoothed)*slew;
-        if(shimmerSmoothed>0.00001f) {
-            const float phase1=float(grainPhase);
-            const float phase2=std::fmod(phase1+0.5f,1.f);
-            const float w1=aeryther::shimmerGrainWindow(phase1);
-            const float w2=aeryther::shimmerGrainWindow(phase2);
-            const double off1=double(grain)*(1.0-double(phase1));
-            const double off2=double(grain)*(1.0-double(phase2));
-            const float shimmerL=w1*readPitch(0,off1)+w2*readPitch(0,off2);
-            const float shimmerR=w1*readPitch(1,off1)+w2*readPitch(1,off2);
-            outL=l*(1.f-shimmerSmoothed)+shimmerL*shimmerSmoothed;
-            outR=r*(1.f-shimmerSmoothed)+shimmerR*shimmerSmoothed;
-            grainPhase+=inc;
+        const float shimmerLevel=shimmerSmoothed;
+        const float normalFeedback=feedback*(1.f-0.55f*shimmerLevel);
+        std::array<std::array<float,2>,4> taps{};
+        std::array<std::array<float,2>,3> raised{};
+        for(int stage=0;stage<=top;++stage)
+            for(int ch=0;ch<2;++ch)
+                taps[size_t(stage)][size_t(ch)]=octaveRings[size_t(stage)][size_t(ch)][size_t(read)];
+
+        // Each pitch stage reads ONLY the octave beneath it. Unlike feeding
+        // the complete wet sum back into the shifter, already-raised echoes
+        // never climb above the selected two/three-octave ceiling.
+        if(shimmerLevel>0.00001f) {
+            const float p1=float(grainPhase);
+            const float p2=std::fmod(p1+.5f,1.f);
+            const float w1=aeryther::shimmerGrainWindow(p1);
+            const float w2=aeryther::shimmerGrainWindow(p2);
+            const double cursorPos=double(grainCursor);
+            const double offset1=double(grain)*(1.0-double(p1));
+            const double offset2=double(grain)*(1.0-double(p2));
+            for(int stage=0;stage<top;++stage) {
+                for(int ch=0;ch<2;++ch) {
+                    grainHistory[size_t(stage)][size_t(ch)][size_t(grainCursor)]
+                        =taps[size_t(stage)][size_t(ch)];
+                    raised[size_t(stage)][size_t(ch)]=
+                          w1*pitchRead(stage,ch,cursorPos-offset1)
+                         +w2*pitchRead(stage,ch,cursorPos-offset2);
+                }
+            }
+            grainPhase+=phaseStep;
             if(grainPhase>=1.0)grainPhase-=1.0;
         } else {
-            // Keep the original delay path untouched when SHIMMER is off.
-            // Reset the shifter so enabling it again starts from a clean phase.
             grainPhase=0.0;
+            for(int stage=0;stage<top;++stage)
+                for(int ch=0;ch<2;++ch)
+                    grainHistory[size_t(stage)][size_t(ch)][size_t(grainCursor)]
+                        =taps[size_t(stage)][size_t(ch)];
         }
-        ring[0][size_t(cursor)]=inl+(pingPong?outR:outL)*feedback;
-        ring[1][size_t(cursor)]=inr+(pingPong?outL:outR)*feedback;
-        b.setSample(0,i,outL);b.setSample(1,i,outR);
-        cursor=(cursor+1)%n;
-        pitchCursor=(pitchCursor+1)%pn;
+
+        const std::array<float,2> input{
+            b.getSample(0,i),b.getSample(1,i)};
+        std::array<float,2> wet{};
+        for(int stage=0;stage<=top;++stage) {
+            for(int ch=0;ch<2;++ch) {
+                wet[size_t(ch)]+=taps[size_t(stage)][size_t(ch)];
+                const int other=pingPong?1-ch:ch;
+                const float again=taps[size_t(stage)][size_t(other)];
+                // Each octave maintains its own repeats. Stage 0 remains
+                // identical to the old delay when SHIMMER=0.
+                float value=stage==0?input[size_t(ch)]:0.f;
+                value+=again*normalFeedback;
+                if(stage>0)
+                    value+=raised[size_t(stage-1)][size_t(other)]
+                           *feedback*shimmerLevel*.68f;
+                octaveRings[size_t(stage)][size_t(ch)][size_t(cursor)]=value;
+            }
+        }
+        b.setSample(0,i,wet[0]);
+        b.setSample(1,i,wet[1]);
+        if(++cursor>=n)cursor=0;
+        if(++grainCursor>=pn)grainCursor=0;
     }
 }
 
@@ -642,7 +672,8 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
                 : clampf(modulated("delayTime",get("delayTime"),lfo1,lfo2),0.04f,1.8f);
             layerDelays[size_t(layer)].process(wetScratch,seconds,
                 clampf(modulated("delayFeedback",get("delayFeedback"),lfo1,lfo2),0,0.94f),
-                currentSampleRate,enabled("pingPong"),get("delayShimmer"));
+                currentSampleRate,enabled("pingPong"),get("delayShimmer"),
+                int(get("shimmerMaxOctaves"))+2);
             const float mix=clampf(modulated("delayMix",get("delayMix"),lfo1,lfo2),0.f,1.f);
             for(int ch=0;ch<2;++ch){
                 b.applyGain(ch,0,samples,1.f-mix);
