@@ -36,6 +36,20 @@ int main() {
   assert(std::abs(sampleReadPosition(2,120,48000,100,48100,2)-48100)<0.001);
   assert(sampleReadPosition(1,0,48000,0,48000,0)==0);
   assert(std::isfinite(wetDry(.4f,.2f,.5f)));
+  // Delay sync: at 120 BPM 1/4 = 500ms, dotted 1/8 = 375ms,
+  // triplet 1/8 = 166.67ms; safe BPM bounds and shape windows.
+  assert(std::abs(tempoDelaySeconds(120.0,2)-0.5)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(120.0,7)-0.375)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(120.0,10)-1.0/6.0)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(60.0,0)-4.0)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(0.0,0)-8.0)<1.e-7);
+  assert(std::abs(shimmerGrainWindow(0.f))<1.e-6f);
+  assert(std::abs(shimmerGrainWindow(.5f)-1.f)<1.e-6f);
+  for (int i=0;i<100;++i){
+      float p=float(i)/100.f;
+      const float p2=std::fmod(p+.5f,1.f);
+      assert(std::abs(shimmerGrainWindow(p)+shimmerGrainWindow(p2)-1.f)<1.e-5f);
+  }
   // Reverb 0% must preserve dry at unity, while intermediate positions use
   // an equal-power fade instead of the old loudness-dropping linear blend.
   assert(std::abs(reverbGains(0.f).dry-1.f)<0.00001f);
