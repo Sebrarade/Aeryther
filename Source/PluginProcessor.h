@@ -69,6 +69,7 @@ private:
         std::array<std::vector<float>, 2> pitchRing;
         int cursor = 0, pitchCursor = 0;
         double grainPhase = 0.0;
+        float shimmerSmoothed = 0.0f;
         void prepare(int maximumSamples, double sampleRate);
         void process(juce::AudioBuffer<float>& buffer, float seconds, float feedback,
                      double sampleRate, bool pingPong, float shimmer);
