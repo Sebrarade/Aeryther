@@ -86,7 +86,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     :juce::AudioProcessorEditor(&p),processor(p){
     setLookAndFeel(&look);setOpaque(true);
 #if defined(AERYTHER_FX)
-    setSize(872,350);
+    setSize(872,400);
     // FX keeps only the processing controls; no sampler or MIDI layers.
     addSwitch("sampleFilter","FILTER ON",{55,80,140,32});
     addChoice("filterType",{54,124,195,28});
@@ -95,9 +95,12 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("filterMix","MIX",{235,161,75,85});
     addSwitch("sampleDelay","DELAY ON",{340,80,140,32});
     addSwitch("pingPong","PING PONG",{486,80,125,32});
-    addDial("delayTime","TIME",{334,161,75,85});
-    addDial("delayFeedback","FEEDBACK",{426,161,75,85});
-    addDial("delayMix","MIX",{516,161,75,85});
+    addSwitch("delaySync","SYNC",{337,125,78,28});
+    addChoice("delayDivision",{426,125,178,28});
+    addDial("delayTime","TIME",{330,179,60,83});
+    addDial("delayFeedback","FEEDBACK",{402,179,60,83});
+    addDial("delayMix","MIX",{474,179,60,83});
+    addDial("delayShimmer","SHIMMER",{546,179,60,83});
     addSwitch("sampleConv","CONV ON",{641,80,110,32});
     addChoice("convMode",{636,126,160,28});
     addSwitch("convReverse","REVERSE",{638,174,87,27});
@@ -107,13 +110,13 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("reverbMix","MIX",{999,161,66,85});
     addSwitch("sampleDirect","DIRECT",{640,258,140,30});
     // Shared convolver EQ strip: EQ colour follows PRE / POST convolution.
-    addSwitch("eqEnabled","EQ ON",{49,346,114,32});
-    addChoice("eqPosition",{193,348,236,30});
-    addDial("eqLow","LOW",{488,334,92,82});
-    addDial("eqMid","MID",{637,334,92,82});
-    addDial("eqHigh","HIGH",{786,334,92,82});
+    addSwitch("eqEnabled","EQ ON",{49,396,114,32});
+    addChoice("eqPosition",{193,398,236,30});
+    addDial("eqLow","LOW",{488,384,92,82});
+    addDial("eqMid","MID",{637,384,92,82});
+    addDial("eqHigh","HIGH",{786,384,92,82});
 #else
-    setSize(1170,812);
+    setSize(1170,866);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
     // Top row: Sample (left), Wave (middle), Sub (right)
     // All SAMPLE dials share one row; BPM and ROOT get generous, readable
@@ -175,10 +178,14 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     for(int i=0;i<4;++i){const char* ids[]={"cutoff","resonance","drive","filterMix"};
         const char* names[]={"CUTOFF","RESONANCE","DRIVE","MIX"};
         addDial(ids[i],names[i],{53+i*113,835,71,73});}
-    for(int i=0;i<3;++i){const char* ids[]={"delayTime","delayFeedback","delayMix"};
-        const char* names[]={"TIME","FEEDBACK","MIX"};
-        addDial(ids[i],names[i],{523+i*105,833,72,76});}
-    addSwitch("pingPong","PING-PONG",{729,799,112,30});
+    addSwitch("delaySync","SYNC",{511,844,81,28});
+    addChoice("delayDivision",{602,844,118,28});
+    addSwitch("pingPong","PING-PONG",{730,844,106,28});
+    for(int i=0;i<4;++i){
+        const char* ids[]={"delayTime","delayFeedback","delayMix","delayShimmer"};
+        const char* names[]={"TIME","FEEDBACK","MIX","SHIMMER"};
+        addDial(ids[i],names[i],{504+i*82,882,65,78});
+    }
     addChoice("convMode",{877,830,295,29});
     addSwitch("convReverse","REVERSE",{1041,866,126,30});
     addDial("convMix","MIX",{1228,829,72,80});
@@ -186,11 +193,11 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("reverbTone","TONE",{1394,831,54,80});
     addDial("reverbMix","MIX",{1456,831,54,80});
     // Dedicated three-band EQ, physically separated from both FX and MOD matrix.
-    addSwitch("eqEnabled","EQ ON",{55,977,136,32});
-    addChoice("eqPosition",{216,979,231,30});
-    addDial("eqLow","LOW",{530,964,94,87});
-    addDial("eqMid","MID",{713,964,94,87});
-    addDial("eqHigh","HIGH",{896,964,94,87});
+    addSwitch("eqEnabled","EQ ON",{55,1043,136,32});
+    addChoice("eqPosition",{216,1045,231,30});
+    addDial("eqLow","LOW",{530,1030,94,87});
+    addDial("eqMid","MID",{713,1030,94,87});
+    addDial("eqHigh","HIGH",{896,1030,94,87});
     refreshParameterReadouts();
     startTimerHz(24);
 #endif
@@ -364,19 +371,19 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.3.6",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.7",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
-    panel(g,{321,56,290,235},"DELAY");
+    panel(g,{321,56,290,286},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
     panel(g,{832,56,238,235},"REVERB");
-    panel(g,{20,307,1050,119},"3 BAND EQ  /  CONVOLVER COLOUR");
+    panel(g,{20,357,1050,119},"3 BAND EQ  /  CONVOLVER COLOUR");
 #else
     g.setColour(ink);g.setFont(juce::FontOptions(33.f));
     g.drawFittedText("AERYTHER",{500,6,540,45},juce::Justification::centred,1);
     g.setFont(juce::FontOptions(13.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.3.6",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.7",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
@@ -386,10 +393,10 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     panel(g,{1181,463,329,157},"LFO 2");
     panel(g,{35,627,1475,155},"MODULATION MATRIX");
     panel(g,{35,795,452,118},"FILTER");
-    panel(g,{493,795,350,118},"DELAY");
+    panel(g,{493,795,350,184},"DELAY");
     panel(g,{849,795,467,118},"CONVOLVER");
     panel(g,{1322,795,188,118},"REVERB");
-    panel(g,{35,923,1475,134},"3 BAND EQ  /  CONVOLVER COLOUR");
+    panel(g,{35,989,1475,134},"3 BAND EQ  /  CONVOLVER COLOUR");
     waveformRect={57,139,490,92};paintWaveform(g);
     // Minimal functional illustrations, drawn in JUCE rather than static imagery.
     auto graph=[&](juce::Rectangle<float> r, int kind, int traces){
