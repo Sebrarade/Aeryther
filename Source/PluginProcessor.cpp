@@ -104,6 +104,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
     f("delayTime","Delay Time",0.04f,1.8f,0.35f);
     f("delayFeedback","Delay Feedback",0,0.94f,0.35f);
     b("pingPong","Ping Pong",true); f("delayMix","Delay Mix",0,1,0.4f);
+    b("delaySync","Tempo Sync",false);
+    c("delayDivision","Delay Note",{"1/1","1/2","1/4","1/8","1/16","1/32",
+                                       "1/4 D","1/8 D","1/16 D","1/4 T","1/8 T","1/16 T"},2);
+    f("delayShimmer","Octave Shimmer",0,1,0,0.001f);
     c("convMode","Convolver",{"AUUU","CROSS","CATHOLIC","DARK"},0);
     b("convReverse","Reverse Impulse",true);
     f("convMix","Convolver Mix",0,1,1);
@@ -154,22 +158,63 @@ float AerytherAudioProcessor::get(const char* id) const {
     if (auto* v=state.getRawParameterValue(id))return v->load();return 0;
 }
 
-void AerytherAudioProcessor::DelayLine::prepare(int maximumSamples) {
+void AerytherAudioProcessor::DelayLine::prepare(int maximumSamples, double sr) {
     for(auto& r:ring)r.assign(size_t(maximumSamples),0.0f);
-    cursor=0;
+    const int pitchCount=juce::jmax(256,int(sr*0.21));
+    for(auto& r:pitchRing)r.assign(size_t(pitchCount),0.0f);
+    cursor=0;pitchCursor=0;grainPhase=0.0;
 }
-void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,float seconds,float feedback,
-                                                double sr,bool pingPong) {
+void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,float seconds,
+                                                float feedback,double sr,bool pingPong,float shimmer) {
     if(ring[0].empty())return;
-    int n=int(ring[0].size()),delay=juce::jlimit(1,n-1,int(seconds*sr));
+    const int n=int(ring[0].size());
+    const int delay=juce::jlimit(1,n-1,int(seconds*sr));
+    const float amount=juce::jlimit(0.f,1.f,shimmer);
+    const int pn=int(pitchRing[0].size());
+    // Two Hann-windowed stereo heads, 180 degrees apart, scan the delayed
+    // feedback at twice normal rate. Only pitch-shifted repeats are recirculated.
+    // 80ms grains reduce the metallic artifacts of shorter granular windows.
+    const int grain=juce::jlimit(32,pn/2,int(sr*0.08));
+    const double inc=1.0/double(grain);
+    auto readPitch=[&](int ch,double offset)->float {
+        double position=double(pitchCursor)-offset;
+        while(position<0.0)position+=pn;
+        while(position>=pn)position-=pn;
+        const int i0=int(position),i1=(i0+1)%pn;
+        const float frac=float(position-double(i0));
+        const auto& buffer=pitchRing[size_t(ch)];
+        return buffer[size_t(i0)]*(1.f-frac)+buffer[size_t(i1)]*frac;
+    };
     for(int i=0;i<b.getNumSamples();++i) {
-        int read=(cursor-delay+n)%n;
-        float l=ring[0][size_t(read)],r=ring[1][size_t(read)];
-        float inl=b.getSample(0,i),inr=b.getSample(1,i);
-        ring[0][size_t(cursor)]=inl+(pingPong?r:l)*feedback;
-        ring[1][size_t(cursor)]=inr+(pingPong?l:r)*feedback;
-        b.setSample(0,i,l);b.setSample(1,i,r);
+        const int read=(cursor-delay+n)%n;
+        const float l=ring[0][size_t(read)],r=ring[1][size_t(read)];
+        const float inl=b.getSample(0,i),inr=b.getSample(1,i);
+        float outL=l,outR=r;
+        if(amount>0.0001f) {
+            pitchRing[0][size_t(pitchCursor)]=l;
+            pitchRing[1][size_t(pitchCursor)]=r;
+            const float phase1=float(grainPhase);
+            const float phase2=std::fmod(phase1+0.5f,1.f);
+            const float w1=aeryther::shimmerGrainWindow(phase1);
+            const float w2=aeryther::shimmerGrainWindow(phase2);
+            const double off1=double(grain)*(1.0-double(phase1));
+            const double off2=double(grain)*(1.0-double(phase2));
+            const float shimmerL=w1*readPitch(0,off1)+w2*readPitch(0,off2);
+            const float shimmerR=w1*readPitch(1,off1)+w2*readPitch(1,off2);
+            outL=l*(1.f-amount)+shimmerL*amount;
+            outR=r*(1.f-amount)+shimmerR*amount;
+            grainPhase+=inc;
+            if(grainPhase>=1.0)grainPhase-=1.0;
+        } else {
+            // Keep the original delay path untouched when SHIMMER is off.
+            // Reset the shifter so enabling it again starts from a clean phase.
+            grainPhase=0.0;
+        }
+        ring[0][size_t(cursor)]=inl+(pingPong?outR:outL)*feedback;
+        ring[1][size_t(cursor)]=inr+(pingPong?outL:outR)*feedback;
+        b.setSample(0,i,outL);b.setSample(1,i,outR);
         cursor=(cursor+1)%n;
+        pitchCursor=(pitchCursor+1)%pn;
     }
 }
 
@@ -291,7 +336,8 @@ void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
     blockCapacity=juce::jmax(64,maximumBlock);
     for(auto& voice:waveVoices)voice.envelope.setSampleRate(sr);
     for(auto& voice:sampleVoices)voice.envelope.setSampleRate(sr);
-    for(auto& d:layerDelays)d.prepare(int(sr*2.0)+4);
+    // Keep enough delay history for a 1/1 note at very slow host tempos.
+    for(auto& d:layerDelays)d.prepare(int(sr*8.0)+4,sr);
     for(auto& f:layerFilters)f.prepare(sr,maximumBlock);
     for(auto& b:layerAudio)b.setSize(2,blockCapacity);
     for(auto* b:{&convInput,&processed,&convWet,&wetScratch})b->setSize(2,blockCapacity);
@@ -562,7 +608,8 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
     }
 }
 
-void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int samples,float lfo1,float lfo2) {
+void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int samples,float lfo1,float lfo2,
+                                          double hostBpm) {
     convInput.clear();processed.clear();convWet.clear();
     for(int layer=0;layer<3;++layer) {
         const char* prefixes[]={"sample","wave","sub"};
@@ -584,10 +631,14 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
         }
         if(param("Delay")) {
             wetScratch.makeCopyOf(b,true);
-            layerDelays[size_t(layer)].process(wetScratch,
-                clampf(modulated("delayTime",get("delayTime"),lfo1,lfo2),0.04f,1.8f),
+            const bool synced=enabled("delaySync");
+            const float seconds=synced
+                ? float(aeryther::tempoDelaySeconds(hostBpm,
+                      juce::jlimit(0,11,int(get("delayDivision")))))
+                : clampf(modulated("delayTime",get("delayTime"),lfo1,lfo2),0.04f,1.8f);
+            layerDelays[size_t(layer)].process(wetScratch,seconds,
                 clampf(modulated("delayFeedback",get("delayFeedback"),lfo1,lfo2),0,0.94f),
-                currentSampleRate,enabled("pingPong"));
+                currentSampleRate,enabled("pingPong"),get("delayShimmer"));
             const float mix=clampf(modulated("delayMix",get("delayMix"),lfo1,lfo2),0.f,1.f);
             for(int ch=0;ch<2;++ch){
                 b.applyGain(ch,0,samples,1.f-mix);
@@ -700,7 +751,7 @@ void AerytherAudioProcessor::processBlock(juce::AudioBuffer<float>& output,juce:
     currentFilterEnv=filterEnvelope.getNextSample();
     currentAmpModEnv=amplitudeModEnvelope.getNextSample();
     for(int i=1;i<num;++i) {filterEnvelope.getNextSample();amplitudeModEnvelope.getNextSample();}
-    applyRouting(output,num,float(lfo[0]),float(lfo[1]));
+    applyRouting(output,num,float(lfo[0]),float(lfo[1]),hostBpm);
     for(int ch=0;ch<output.getNumChannels();++ch)
         output.applyGain(ch,0,num,0.8f);
     transportFrameCounter+=uint64_t(num);
