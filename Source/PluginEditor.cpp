@@ -8,9 +8,9 @@ const juce::Colour pale=juce::Colour::fromRGB(235,241,249);
 const juce::Colour border=juce::Colour::fromRGB(205,215,229);
 const juce::Colour white=juce::Colour::fromRGB(248,250,254);
 #if defined(AERYTHER_FX)
-constexpr float uiScale=0.8f;
+constexpr float uiScale=0.74f;
 #else
-constexpr float uiScale=0.76f;
+constexpr float uiScale=0.70f;
 #endif
 juce::Rectangle<int> compact(juce::Rectangle<int> r){
  return {juce::roundToInt(r.getX()*uiScale),juce::roundToInt(r.getY()*uiScale),
@@ -86,7 +86,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     :juce::AudioProcessorEditor(&p),processor(p){
     setLookAndFeel(&look);setOpaque(true);
 #if defined(AERYTHER_FX)
-    setSize(872,400);
+    setSize(798,355);
     // FX keeps only the processing controls; no sampler or MIDI layers.
     addSwitch("sampleFilter","FILTER ON",{55,80,140,32});
     addChoice("filterType",{54,124,195,28});
@@ -101,6 +101,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("delayFeedback","FEEDBACK",{402,179,60,83});
     addDial("delayMix","MIX",{474,179,60,83});
     addDial("delayShimmer","SHIMMER",{546,179,60,83});
+    addChoice("shimmerMaxOctaves",{337,282,267,26});
     addSwitch("sampleConv","CONV ON",{641,80,110,32});
     addChoice("convMode",{636,126,160,28});
     addSwitch("convReverse","REVERSE",{638,174,87,27});
@@ -116,7 +117,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("eqMid","MID",{637,384,92,82});
     addDial("eqHigh","HIGH",{786,384,92,82});
 #else
-    setSize(1170,866);
+    setSize(1064,791);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
     // Top row: Sample (left), Wave (middle), Sub (right)
     // All SAMPLE dials share one row; BPM and ROOT get generous, readable
@@ -181,6 +182,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addSwitch("delaySync","SYNC",{511,844,81,28});
     addChoice("delayDivision",{602,844,118,28});
     addSwitch("pingPong","PING-PONG",{730,844,106,28});
+    addChoice("shimmerMaxOctaves",{637,806,197,26});
     for(int i=0;i<4;++i){
         const char* ids[]={"delayTime","delayFeedback","delayMix","delayShimmer"};
         const char* names[]={"TIME","FEEDBACK","MIX","SHIMMER"};
@@ -215,8 +217,10 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     c->slider.setSliderStyle(matrixAmount?juce::Slider::LinearHorizontal:
                                            juce::Slider::RotaryHorizontalVerticalDrag);
     if(matrixAmount) {
-        c->slider.setTextBoxStyle(juce::Slider::TextBoxRight,false,40,16);
-        c->slider.setBounds(r);
+        // The previous JUCE textbox rendered white-on-white squares in Ableton.
+        // Draw the value in our own high-contrast Label, outside the slider.
+        c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        c->slider.setBounds(r.getX(),r.getY(),r.getWidth()-37,r.getHeight());
     } else if(hasReadout) {
         // Never rely on a Slider's embedded textbox. On the compact UI its
         // text can be clipped or drawn underneath the rotary slider.
@@ -239,6 +243,16 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
         addAndMakeVisible(c->label);
     }
 
+    if(matrixAmount) {
+        c->valueLabel.setText("0.00",juce::dontSendNotification);
+        c->valueLabel.setJustificationType(juce::Justification::centredRight);
+        c->valueLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
+        c->valueLabel.setColour(juce::Label::textColourId,ink);
+        c->valueLabel.setColour(juce::Label::backgroundColourId,pale);
+        c->valueLabel.setBounds(r.getRight()-37,r.getY(),37,r.getHeight());
+        c->valueLabel.setInterceptsMouseClicks(false,false);
+        addAndMakeVisible(c->valueLabel);
+    }
     if(hasReadout) {
         c->valueLabel.setText(parameterId=="root"?"C3":"120",juce::dontSendNotification);
         c->valueLabel.setJustificationType(juce::Justification::centred);
@@ -285,13 +299,16 @@ void AerytherAudioProcessorEditor::refreshParameterReadouts(){
     for(const auto& dial:dials) {
         const bool isRoot=dial->parameterID=="root";
         const bool isBpm=dial->parameterID=="sampleBpm";
-        if((!isRoot && !isBpm) || dial->valueLabel.isBeingEdited())continue;
+        const bool isAmount=dial->parameterID.startsWith("mod") &&
+                            dial->parameterID.endsWith("Amount");
+        if((!isRoot && !isBpm && !isAmount) || dial->valueLabel.isBeingEdited())continue;
         const auto* raw=processor.state.getRawParameterValue(dial->parameterID);
         if(!raw)continue;
-        const int n=juce::roundToInt(raw->load());
+        const auto n=raw->load();
         const auto value=isRoot
-            ? juce::MidiMessage::getMidiNoteName(juce::jlimit(0,127,n),true,true,3)
-            : juce::String(juce::jlimit(30,300,n));
+            ? juce::MidiMessage::getMidiNoteName(juce::jlimit(0,127,juce::roundToInt(n)),true,true,3)
+            : isBpm ? juce::String(juce::jlimit(30,300,juce::roundToInt(n)))
+                    : juce::String(n,2);
         if(dial->valueLabel.getText()!=value)
             dial->valueLabel.setText(value,juce::dontSendNotification);
     }
@@ -371,19 +388,19 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.3.7",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.8",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,286},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
     panel(g,{832,56,238,235},"REVERB");
-    panel(g,{20,357,1050,119},"3 BAND EQ  /  CONVOLVER COLOUR");
+    panel(g,{20,357,1050,119},"3 BAND EQ");
 #else
     g.setColour(ink);g.setFont(juce::FontOptions(33.f));
     g.drawFittedText("AERYTHER",{500,6,540,45},juce::Justification::centred,1);
     g.setFont(juce::FontOptions(13.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.3.7",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("BETA 0.3.8",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
@@ -396,7 +413,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     panel(g,{493,795,350,184},"DELAY");
     panel(g,{849,795,467,118},"CONVOLVER");
     panel(g,{1322,795,188,118},"REVERB");
-    panel(g,{35,989,1475,134},"3 BAND EQ  /  CONVOLVER COLOUR");
+    panel(g,{35,989,1475,134},"3 BAND EQ");
     waveformRect={57,139,490,92};paintWaveform(g);
     // Minimal functional illustrations, drawn in JUCE rather than static imagery.
     auto graph=[&](juce::Rectangle<float> r, int kind, int traces){
