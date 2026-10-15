@@ -25,6 +25,9 @@ AerytherAudioProcessorEditor::LightLook::LightLook(){
     setColour(juce::TextButton::textColourOffId,ink);
     setColour(juce::Label::textColourId,ink);
     setColour(juce::Slider::textBoxTextColourId,ink);
+    setColour(juce::Slider::textBoxBackgroundColourId,pale);
+    setColour(juce::Slider::textBoxOutlineColourId,border);
+    setColour(juce::ComboBox::arrowColourId,blue);
     setColour(juce::PopupMenu::backgroundColourId,white);
     setColour(juce::PopupMenu::textColourId,ink);
 }
@@ -55,7 +58,8 @@ void AerytherAudioProcessorEditor::LightLook::drawToggleButton(juce::Graphics& g
     g.setColour(b.getToggleState()?juce::Colour::fromRGB(208,227,247):pale);
     g.fillRoundedRectangle(r,5);
     g.setColour(b.getToggleState()?blue:border);g.drawRoundedRectangle(r,5,1);
-    g.setColour(ink);g.setFont(12);g.drawFittedText(b.getButtonText(),b.getLocalBounds(),juce::Justification::centred,1);
+    g.setColour(ink);g.setFont(juce::FontOptions(14.f));
+    g.drawFittedText(b.getButtonText(),b.getLocalBounds().reduced(2,0),juce::Justification::centred,1);
 }
 void AerytherAudioProcessorEditor::LightLook::drawLinearSlider(
     juce::Graphics& g,int x,int y,int width,int height,float sliderPos,
@@ -113,9 +117,10 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     // Shared convolver EQ strip: EQ colour follows PRE / POST convolution.
     addSwitch("eqEnabled","EQ ON",{49,396,114,32});
     addChoice("eqPosition",{193,398,236,30});
-    addDial("eqLow","LOW",{488,384,92,82});
-    addDial("eqMid","MID",{637,384,92,82});
-    addDial("eqHigh","HIGH",{786,384,92,82});
+    // Three dials share equal widths and generous horizontal spacing.
+    addDial("eqLow","LOW",{510,384,92,82});
+    addDial("eqMid","MID",{680,384,92,82});
+    addDial("eqHigh","HIGH",{850,384,92,82});
 #else
     setSize(1033,714);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
@@ -198,9 +203,10 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     // Compact 3-band strip: EQ stays visible below the FX without a huge footer.
     addSwitch("eqEnabled","EQ ON",{55,993,132,28});
     addChoice("eqPosition",{216,993,231,28});
-    addDial("eqLow","LOW",{550,971,88,62});
-    addDial("eqMid","MID",{725,971,88,62});
-    addDial("eqHigh","HIGH",{900,971,88,62});
+    // Evenly distribute LOW / MID / HIGH across the strip, not clustered left.
+    addDial("eqLow","LOW",{620,971,88,62});
+    addDial("eqMid","MID",{917,971,88,62});
+    addDial("eqHigh","HIGH",{1214,971,88,62});
     refreshParameterReadouts();
     startTimerHz(24);
 #endif
@@ -250,7 +256,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
 
     if(!matrixAmount) {
         c->label.setText(title,juce::dontSendNotification);
-        const float fontSize=juce::String(title).length()>7?8.5f:10.0f;
+        const float fontSize=juce::String(title).length()>7?11.25f:12.5f;
         c->label.setFont(juce::Font(juce::FontOptions(fontSize)));
         c->label.setJustificationType(juce::Justification::centred);
         c->label.setBounds(r.getX()-3,r.getY(),r.getWidth()+6,14);
@@ -260,7 +266,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     if(matrixAmount) {
         c->valueLabel.setText("0.00",juce::dontSendNotification);
         c->valueLabel.setJustificationType(juce::Justification::centredRight);
-        c->valueLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
+        c->valueLabel.setFont(juce::Font(juce::FontOptions(13.25f)));
         c->valueLabel.setColour(juce::Label::textColourId,ink);
         c->valueLabel.setColour(juce::Label::backgroundColourId,pale);
         c->valueLabel.setBounds(r.getRight()-37,r.getY(),37,r.getHeight());
@@ -270,7 +276,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     if(hasReadout) {
         c->valueLabel.setText(parameterId=="root"?"C3":"120",juce::dontSendNotification);
         c->valueLabel.setJustificationType(juce::Justification::centred);
-        c->valueLabel.setFont(juce::Font(juce::FontOptions(13.0f)));
+        c->valueLabel.setFont(juce::Font(juce::FontOptions(14.5f)));
         c->valueLabel.setColour(juce::Label::textColourId,ink);
         c->valueLabel.setColour(juce::Label::backgroundColourId,pale);
         c->valueLabel.setColour(juce::Label::outlineColourId,border);
@@ -334,6 +340,11 @@ void AerytherAudioProcessorEditor::timerCallback(){
 void AerytherAudioProcessorEditor::addSwitch(const char* id,const char* title,juce::Rectangle<int> r){
     r=compact(r);
     auto c=std::make_unique<Switch>();c->button.setButtonText(title);c->button.setBounds(r);
+    const auto route=juce::String(id);
+    if(route.endsWith("Direct"))
+        c->button.setTooltip("Parallel dry path: adds the original layer beside the processed sound");
+    else if(route.endsWith("Filter") || route.endsWith("Delay") || route.endsWith("Conv"))
+        c->button.setTooltip("Processed path runs in order: FILTER > DELAY > CONVOLVER");
     addAndMakeVisible(c->button);
     c->attachment=std::make_unique<BoolAttach>(processor.state,id,c->button);
     switches.push_back(std::move(c));
@@ -402,7 +413,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
-    g.drawText("BETA 0.3.9",juce::Rectangle<int>{925,15,135,25},juce::Justification::centredRight);
+    g.drawText("AERYTHER 1.0",juce::Rectangle<int>{914,15,145,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
     panel(g,{321,56,290,286},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
@@ -415,7 +426,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setFont(juce::FontOptions(10.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{555,39,430,18},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("BETA 0.3.9",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
+    g.drawText("VERSION 1.0",juce::Rectangle<int>{1338,23,160,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
@@ -454,7 +465,8 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     graph({600.f,139.f,554.f,33.f},0,6);
     graph({1210.f,139.f,276.f,33.f},1,1);
     g.setColour(ink.withAlpha(.6f));g.setFont(juce::FontOptions(11.f));
-    g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{57,75,240,12},juce::Justification::left);
+    // Artist credit stays in the header and does not intersect the SAMPLE panel.
+    g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{56,47,260,17},juce::Justification::left);
     g.drawFittedText(processor.sampleFileName(),
                      juce::Rectangle<int>{206,105,185,21},
                      juce::Justification::centredRight,1);
