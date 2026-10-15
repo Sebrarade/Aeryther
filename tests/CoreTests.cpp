@@ -14,12 +14,25 @@ int main() {
   assert(wetDry(.8f,.2f,1.f)==.2f);
   assert(wetDry(.8f,.2f,0.f)==.8f);
   assert(wetDry(.8f,.2f,2.f)==.2f);
-  for (bool f : {false,true}) for (bool d : {false,true}) for (bool c : {false,true}) {
-    const auto p = getPaths({f,d,c,true});
-    assert(p.dry && !p.filtered && !p.delayed && !p.convolved);
+  // Every route combination must have independent DIRECT and explicit
+  // serial effect flags. All-off must be silent (no implicit bypass).
+  for (bool f : {false,true})
+  for (bool d : {false,true})
+  for (bool c : {false,true})
+  for (bool direct : {false,true}) {
+    const auto p=getPaths({f,d,c,direct});
+    assert(p.dry==direct);
+    assert(p.filtered==f);
+    assert(p.delayed==d);
+    assert(p.convolved==c);
+    assert(p.hasProcessedPath()==(f||d||c));
+    assert(p.audible()==(direct||f||d||c));
   }
-  assert(getPaths({true,true,true,false}).convolved);
-  assert(!getPaths({true,true,true,false}).dry);
+  assert(!getPaths({false,false,false,false}).audible());
+  assert(getPaths({true,true,true,true}).dry &&
+         getPaths({true,true,true,true}).convolved);
+  assert(getPaths({false,false,false,true}).dry &&
+         !getPaths({false,false,false,true}).hasProcessedPath());
   assert(midiTriggersSample(false));
   assert(!midiTriggersSample(true));
   assert(midiTriggersWave(true)&&midiTriggersSub(true));
