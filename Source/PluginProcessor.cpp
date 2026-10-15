@@ -588,91 +588,138 @@ void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce:
 }
 
 void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int first,int length,
-                                             bool looping,double ppq,double hostBpm,
-                                             int64_t sampleTime,double srcBpm,float lfo1,float lfo2) {
+                                              bool looping,double ppq,double hostBpm,
+                                              int64_t sampleTime,double srcBpm,float lfo1,float lfo2) {
     auto data=std::atomic_load(&sample);
     if(!data || data->samples.getNumSamples()<2)return;
-    int total=data->samples.getNumSamples();
-    int start=juce::jlimit(0,total-2,int(get("loopStart")*(total-1)));
-    int end=juce::jlimit(start+2,total,int(get("loopEnd")*total));
-    double loopSize=double(end-start);
-    auto gain=juce::Decibels::decibelsToGain(
+    const int total=data->samples.getNumSamples();
+    const int start=juce::jlimit(0,total-2,int(get("loopStart")*(total-1)));
+    const int end=juce::jlimit(start+2,total,int(get("loopEnd")*total));
+    const double loopSize=double(end-start);
+    const float gain=juce::Decibels::decibelsToGain(
         clampf(modulated("sampleLevel",get("sampleLevel"),lfo1,lfo2),-60,6));
-    const float stretch=clampf(modulated("stretch",get("stretch"),lfo1,lfo2),0.25f,4.f);
-    auto dir=int(get("direction"));
-    if(looping) {
-        // 50%-overlapped Hann grains: playhead anchor follows host beats, while the
-        // pitch within each grain remains tied to the file's original sample rate.
-        // Crossfade controls how long the smoothed grains remain overlapped.
-        int grainLength=juce::jmax(64,int(currentSampleRate*(0.035+get("crossfade")*0.55)));
-        int hop=grainLength/2;
-        for(int i=first;i<first+length;++i) {
-            double positionInHost=double(sampleTime+i);
-            int64_t k=int64_t(std::floor(positionInHost/hop));
-            for(int ch=0;ch<2;++ch) {
-                double sum=0,weight=0;
-                for(int overlap=0;overlap<2;++overlap){
-                    int64_t anchor=(k-overlap)*int64_t(hop);
-                    double offset=positionInHost-double(anchor);
-                    if(offset<0 || offset>=grainLength)continue;
-                    double ppqAtAnchor=ppq+(double(anchor)-double(sampleTime))*hostBpm/(60.0*currentSampleRate);
-                    double head=ppqAtAnchor*60.0/(srcBpm*stretch)*data->rate;
-                    double play=head+offset*data->rate/currentSampleRate;
-                    double x=aeryther::wrapped(play,loopSize);
-                    double samplePos=dir==1 ? end-1-x : dir==2 ?
-                        start+([&](){ const auto t=aeryther::wrapped(play,loopSize*2);return t<=loopSize?t:2*loopSize-t; }()) : start+x;
-                    if(dir==1) samplePos=juce::jmax(double(start),samplePos);
-                    float window=0.5f-0.5f*std::cos(2*pi*float(offset)/grainLength);
-                    sum+=readInterpolated(data->samples,ch,samplePos)*window;
-                    weight+=window;
-                }
-                if(weight>0.001)out.addSample(ch,i,float(sum/weight)*gain);
-            }
+    const int direction=juce::jlimit(0,2,int(get("direction")));
+    // 50ms fixed grain hop, 100ms fixed grain length. Neither knob changes
+    // grain boundaries, avoiding the previous discontinuous grain rescheduling.
+    const int hop=juce::jmax(64,int(currentSampleRate*.05));
+    const double grainLength=2.0*double(hop);
+    const double sourcePerOutput=data->rate/currentSampleRate;
+
+    if(data.get()!=activeSamplerData) {
+        activeSamplerData=data.get();
+        loopSamplerGrain.reset();
+        expectedSamplerFrame=-1;
+    }
+
+    auto readSource=[&](int channel,double unwrapped)->float {
+        double position;
+        if(direction==1) {
+            position=double(end-1)-aeryther::wrapped(unwrapped,loopSize);
+        } else if(direction==2) {
+            const double x=aeryther::wrapped(unwrapped,loopSize*2.0);
+            position=double(start)+(x<=loopSize?x:2.0*loopSize-x);
+        } else {
+            position=double(start)+aeryther::wrapped(unwrapped,loopSize);
         }
-        const double beat=ppq+double(first+length)*hostBpm/(60.0*currentSampleRate);
-        const double pos=aeryther::sampleReadPosition(beat,srcBpm*stretch,data->rate,
-                       double(start),double(end),dir);
-        playbackFraction.store(float((pos-double(start))/loopSize),std::memory_order_relaxed);
+        return readInterpolated(data->samples,channel,
+            juce::jlimit(double(start),double(end-1),position));
+    };
+
+    // One stereo grain pair is rendered and normalised per output frame.
+    // Crossfade changes only the smoothly-ramped overlap envelope, not
+    // the grain clock or the underlying read positions.
+    auto readGrains=[&](const SamplerGrain& state,float fade)->std::array<float,2> {
+        const double currentAge=double(state.clock);
+        const double previousAge=currentAge+double(hop);
+        const float wCurrent=state.current.active
+            ? aeryther::samplerGrainWeight(currentAge,grainLength,fade):0.f;
+        const float wPrevious=state.previous.active
+            ? aeryther::samplerGrainWeight(previousAge,grainLength,fade):0.f;
+        const float sum=wCurrent+wPrevious;
+        if(sum<1.e-7f)return {0.f,0.f};
+        std::array<float,2> result{};
+        for(int channel=0;channel<2;++channel) {
+            double value=0.0;
+            if(wCurrent>0.f) {
+                const auto& g=state.current;
+                value+=double(wCurrent)*readSource(channel,
+                    g.source+currentAge*sourcePerOutput*g.pitchRatio);
+            }
+            if(wPrevious>0.f) {
+                const auto& g=state.previous;
+                value+=double(wPrevious)*readSource(channel,
+                    g.source+previousAge*sourcePerOutput*g.pitchRatio);
+            }
+            result[size_t(channel)]=float(value/double(sum));
+        }
+        return result;
+    };
+    auto beginGrain=[&](SamplerGrain& state,double semitones) {
+        if(state.clock==0) {
+            state.previous=state.current;
+            state.current={state.sourcePosition,
+                           aeryther::samplerPitchRatio(semitones),true};
+        }
+    };
+    auto advanceGrain=[&](SamplerGrain& state,double sourceStep) {
+        state.sourcePosition+=sourceStep;
+        if(++state.clock>=hop)state.clock=0;
+    };
+
+    if(looping) {
+        const int64_t firstFrame=sampleTime+int64_t(first);
+        if(expectedSamplerFrame!=firstFrame) {
+            // Realign only after a transport seek/start, never when turning
+            // STRETCH. Subsequent rate changes integrate continuously.
+            const double stretch=double(sampleControls[size_t(first)].stretch);
+            const double sourceAtStart=ppq*60.0*data->rate/
+                                       (juce::jmax(30.0,srcBpm)*stretch);
+            loopSamplerGrain.reset(aeryther::wrapped(sourceAtStart,loopSize));
+        }
+        for(int i=first;i<first+length;++i) {
+            const auto controls=sampleControls[size_t(i)];
+            beginGrain(loopSamplerGrain,double(controls.pitch));
+            const auto stereo=readGrains(loopSamplerGrain,controls.crossfade);
+            out.addSample(0,i,stereo[0]*gain);
+            out.addSample(1,i,stereo[1]*gain);
+            const double step=sourcePerOutput*juce::jmax(30.0,hostBpm)/
+                         (juce::jmax(30.0,srcBpm)*double(controls.stretch));
+            advanceGrain(loopSamplerGrain,step);
+            if(loopSamplerGrain.sourcePosition>=loopSize)
+                loopSamplerGrain.sourcePosition=aeryther::wrapped(
+                    loopSamplerGrain.sourcePosition,loopSize);
+        }
+        expectedSamplerFrame=firstFrame+length;
+        playbackFraction.store(
+            float(aeryther::wrapped(loopSamplerGrain.sourcePosition,loopSize)/loopSize),
+            std::memory_order_relaxed);
         playbackActive.store(true,std::memory_order_relaxed);
     } else {
-        // Independent MIDI notes: note pitch and time stretch are decoupled by
-        // overlapping grains. The note-on point always starts at the selected region.
-        const int grainLength=juce::jmax(64,int(currentSampleRate*(0.035+get("crossfade")*0.55)));
-        const int hop=juce::jmax(1,grainLength/2);
-        const double sourcePerOutput=data->rate/currentSampleRate;
-        // Stretch is shared by host looping and MIDI-triggered playback.
-        for(auto& v:sampleVoices)if(v.active) {
-            const double pitch=std::pow(2.0,(v.note-get("root")+get("sampleFine")/100.0+
-                 modulated("samplePitch",0.f,lfo1,lfo2))/12.0);
-            const double noteTotalOutputFrames=loopSize/sourcePerOutput*stretch;
-            for(int i=first;i<first+length;++i){
-                auto amp=v.envelope.getNextSample();
-                if(!v.envelope.isActive() || v.samplePosition>=noteTotalOutputFrames){v.active=false;break;}
-                const int64_t k=int64_t(std::floor(v.samplePosition/hop));
-                for(int ch=0;ch<2;++ch){
-                    double sum=0, weight=0;
-                    for(int overlap=0;overlap<2;++overlap){
-                        int64_t anchor=(k-overlap)*int64_t(hop);
-                        double offset=v.samplePosition-double(anchor);
-                        if(offset<0 || offset>=grainLength)continue;
-                        double at=double(anchor)*sourcePerOutput/stretch+offset*pitch*sourcePerOutput;
-                        double sampleAt=start+aeryther::wrapped(at,loopSize);
-                        float window=0.5f-0.5f*std::cos(2*pi*float(offset)/grainLength);
-                        sum+=readInterpolated(data->samples,ch,sampleAt)*window;
-                        weight+=window;
-                    }
-                    if(weight>0.001)out.addSample(ch,i,float(sum/weight)*amp*gain);
-                }
-                v.samplePosition+=1;
-            }
-        }
         bool active=false;
-        for(const auto& v:sampleVoices){
-            if(v.active){
-                playbackFraction.store(float(aeryther::wrapped(v.samplePosition*sourcePerOutput,loopSize)/loopSize),
-                                     std::memory_order_relaxed);
+        for(auto& voice:sampleVoices)if(voice.active) {
+            auto& grain=voice.samplerGrain;
+            const double voiceOffset=double(voice.note)-double(get("root"));
+            for(int i=first;i<first+length;++i) {
+                const auto controls=sampleControls[size_t(i)];
+                const float amp=voice.envelope.getNextSample();
+                if(!voice.envelope.isActive() || grain.sourcePosition>=loopSize) {
+                    voice.active=false;break;
+                }
+                beginGrain(grain,voiceOffset+double(controls.pitch));
+                const auto stereo=readGrains(grain,controls.crossfade);
+                // Fade out the final 5ms rather than abruptly killing a note.
+                const double remaining=loopSize-grain.sourcePosition;
+                const float ending=float(juce::jlimit(0.0,1.0,
+                    remaining/(sourcePerOutput*currentSampleRate*0.005)));
+                out.addSample(0,i,stereo[0]*amp*ending*gain);
+                out.addSample(1,i,stereo[1]*amp*ending*gain);
+                advanceGrain(grain,sourcePerOutput/double(controls.stretch));
+                voice.samplePosition+=1.0;
+            }
+            if(voice.active){
+                playbackFraction.store(float(aeryther::wrapped(
+                    grain.sourcePosition,loopSize)/loopSize),std::memory_order_relaxed);
                 active=true;
-                break;
             }
         }
         playbackActive.store(active,std::memory_order_relaxed);
