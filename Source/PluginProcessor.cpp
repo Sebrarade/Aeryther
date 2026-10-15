@@ -168,12 +168,16 @@ void AerytherAudioProcessor::DelayLine::prepare(int maximumSamples,double sr) {
     for(auto& stage:grainHistory)
         for(auto& channel:stage)channel.assign(size_t(pitchCount),0.f);
     cursor=0;grainCursor=0;grainPhase=0.0;shimmerSmoothed=0.f;
+    timeCrossfade.reset();
 }
 void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,
       float seconds,float feedback,double sr,bool pingPong,float shimmer,int maxOctaves) {
     if(octaveRings[0][0].empty())return;
     const int n=int(octaveRings[0][0].size());
     const int delay=juce::jlimit(1,n-1,int(seconds*sr));
+    // TIME is block-rate; the two delay taps persist between audio blocks.
+    // 75ms fades are gentle enough for live sweeps without pitching the echoes.
+    timeCrossfade.request(delay,juce::jmax(2,int(sr*0.075)));
     const int pn=int(grainHistory[0][0].size());
     const int grain=juce::jlimit(32,pn/2,int(sr*0.08));
     const double phaseStep=1.0/double(grain);
@@ -189,7 +193,10 @@ void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,
         return buf[size_t(i0)]*(1.f-mix)+buf[size_t(i1)]*mix;
     };
     for(int i=0;i<b.getNumSamples();++i) {
-        const int read=(cursor-delay+n)%n;
+        const int readFrom=(cursor-timeCrossfade.fromSamples+n)%n;
+        const bool blending=timeCrossfade.isCrossfading();
+        const int readTo=blending?(cursor-timeCrossfade.toSamples+n)%n:readFrom;
+        const float weight=timeCrossfade.blend();
         shimmerSmoothed+=(amount-shimmerSmoothed)*slew;
         const float shimmerLevel=shimmerSmoothed;
         const float normalFeedback=feedback*(1.f-0.55f*shimmerLevel);
@@ -197,7 +204,9 @@ void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,
         std::array<std::array<float,2>,3> raised{};
         for(int stage=0;stage<=top;++stage)
             for(int ch=0;ch<2;++ch)
-                taps[size_t(stage)][size_t(ch)]=octaveRings[size_t(stage)][size_t(ch)][size_t(read)];
+                taps[size_t(stage)][size_t(ch)]=
+                    octaveRings[size_t(stage)][size_t(ch)][size_t(readFrom)]*(1.f-weight)
+                  + octaveRings[size_t(stage)][size_t(ch)][size_t(readTo)]*weight;
 
         // Each pitch stage reads ONLY the octave beneath it. Unlike feeding
         // the complete wet sum back into the shifter, already-raised echoes
@@ -249,6 +258,7 @@ void AerytherAudioProcessor::DelayLine::process(juce::AudioBuffer<float>& b,
         }
         b.setSample(0,i,wet[0]);
         b.setSample(1,i,wet[1]);
+        timeCrossfade.advance();
         if(++cursor>=n)cursor=0;
         if(++grainCursor>=pn)grainCursor=0;
     }
