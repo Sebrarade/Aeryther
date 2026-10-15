@@ -49,6 +49,24 @@ int main() {
   assert(std::abs(sampleReadPosition(2,120,48000,100,48100,2)-48100)<0.001);
   assert(sampleReadPosition(1,0,48000,0,48000,0)==0);
   assert(std::isfinite(wetDry(.4f,.2f,.5f)));
+  // LFO-to-LFO rate targets work both for Hz and host-synced beat lengths.
+  assert(std::abs(lfoRateMultiplier(0.0)-1.0)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(1.0)-2.0)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(-1.0)-0.5)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(20.0)-4.0)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(-20.0)-0.25)<1.e-9);
+  const double bpm=120.0;
+  const double quarterCycle=60.0/bpm;
+  const double sixteenthCycle=quarterCycle/4.0;
+  assert(std::abs(quarterCycle/lfoRateMultiplier(2.0)-0.125)<1.e-9);
+  assert(std::abs(sixteenthCycle/lfoRateMultiplier(-2.0)-0.5)<1.e-9);
+  for(int k=0;k<2;++k) {
+      const auto v=lfoRandomForCycle(23,k);
+      assert(std::isfinite(v) && v>=-1.f && v<=1.f);
+      assert(lfoRandomForCycle(23,k)==v);
+      assert(lfoRandomForCycle(24,k)!=v);
+  }
+  assert(lfoRandomForCycle(123,0)!=lfoRandomForCycle(123,1));
   // Delay sync: at 120 BPM 1/4 = 500ms, dotted 1/8 = 375ms,
   // triplet 1/8 = 166.67ms; safe BPM bounds and shape windows.
   assert(std::abs(tempoDelaySeconds(120.0,2)-0.5)<1.e-7);
