@@ -57,7 +57,17 @@ private:
         double rate = 44100.0;
         juce::String path;
     };
+    struct SamplerGrain {
+        struct Grain { double source=0.0, pitchRatio=1.0; bool active=false; };
+        Grain current, previous;
+        double sourcePosition=0.0;
+        int clock=0;
+        void reset(double position=0.0) noexcept {
+            current={}; previous={};sourcePosition=position;clock=0;
+        }
+    };
     struct SynthVoice {
+        SamplerGrain samplerGrain;
         bool active = false; int note = -1;
         juce::ADSR envelope;
         std::array<double, 8> phases {};
@@ -98,6 +108,12 @@ private:
     mutable juce::CriticalSection fileNameMutex;
     juce::String loadedSamplePath;
     std::array<SynthVoice, 24> waveVoices, sampleVoices;
+    SamplerGrain loopSamplerGrain;
+    const SampleData* activeSamplerData=nullptr;
+    int64_t expectedSamplerFrame=-1;
+    juce::SmoothedValue<float,juce::ValueSmoothingTypes::Linear> smoothStretch,smoothPitch,smoothCrossfade,smoothReverbMix;
+    struct SampleControl { float stretch=1.f,pitch=0.f,crossfade=0.08f; };
+    std::vector<SampleControl> sampleControls;
     std::array<bool, 128> heldNotes {};
     std::array<double, 8> subPhases {};
     std::array<DelayLine, 3> layerDelays;
