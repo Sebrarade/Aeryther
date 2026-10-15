@@ -44,6 +44,15 @@ private:
         std::unique_ptr<ChoiceAttach> attachment;
     };
     AerytherAudioProcessor& processor;
+    // Resize the entire UI proportionally, keeping all children/font sizes in
+    // their original measured compact geometry instead of reflowing controls.
+    float contentScale() const noexcept;
+#if defined(AERYTHER_FX)
+    static constexpr int defaultWidth=758,defaultHeight=338;
+#else
+    static constexpr int defaultWidth=1033,defaultHeight=714;
+#endif
+
     std::vector<std::unique_ptr<Dial>> dials;
     std::vector<std::unique_ptr<Switch>> switches;
     std::vector<std::unique_ptr<Choice>> choices;
