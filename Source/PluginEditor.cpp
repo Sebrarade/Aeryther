@@ -127,9 +127,9 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     // Top row: Sample (left), Wave (middle), Sub (right)
     // All SAMPLE dials share one row; BPM and ROOT get generous, readable
     // numeric text boxes below the knobs without overlapping other controls.
-    auto sampleKnobs=std::array<const char*,6>{"root","sampleBpm","sampleFine",
+    auto sampleKnobs=std::array<const char*,6>{"root","sampleBpm","sampleTranspose",
                                               "stretch","crossfade","sampleLevel"};
-    auto sampleLabels=std::array<const char*,6>{"ROOT","BPM","FINE","STRETCH",
+    auto sampleLabels=std::array<const char*,6>{"ROOT","BPM","PITCH","STRETCH",
                                                "CROSSFADE","LEVEL"};
     for(int i=0;i<6;++i)
         addDial(sampleKnobs[i],sampleLabels[i],{56+i*84,290,70,96});
@@ -233,7 +233,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
     c->parameterID=parameterId;
     const bool matrixAmount=parameterId.startsWith("mod") &&
                              parameterId.endsWith("Amount");
-    const bool hasReadout=parameterId=="root" || parameterId=="sampleBpm";
+    const bool hasReadout=parameterId=="root" || parameterId=="sampleBpm" || parameterId=="sampleTranspose";
     c->slider.setSliderStyle(matrixAmount?juce::Slider::LinearHorizontal:
                                            juce::Slider::RotaryHorizontalVerticalDrag);
     if(matrixAmount) {
@@ -274,7 +274,7 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
         addAndMakeVisible(c->valueLabel);
     }
     if(hasReadout) {
-        c->valueLabel.setText(parameterId=="root"?"C3":"120",juce::dontSendNotification);
+        c->valueLabel.setText(parameterId=="root"?"C3":parameterId=="sampleBpm"?"120":"0",juce::dontSendNotification);
         c->valueLabel.setJustificationType(juce::Justification::centred);
         c->valueLabel.setFont(juce::Font(juce::FontOptions(14.5f)));
         c->valueLabel.setColour(juce::Label::textColourId,ink);
@@ -284,7 +284,8 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
         c->valueLabel.setEditable(false,true,false); // double-click to type BPM or note
         auto* control=c.get();
         const bool isRoot=parameterId=="root";
-        c->valueLabel.onTextChange=[this,control,isRoot]{
+        const bool isPitch=parameterId=="sampleTranspose";
+        c->valueLabel.onTextChange=[this,control,isRoot,isPitch]{
             const auto input=control->valueLabel.getText().trim();
             double next=control->slider.getValue();
             bool valid=false;
@@ -299,7 +300,12 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
                     next=juce::jlimit(0.0,127.0,input.getDoubleValue());
                     valid=true;
                 }
-            } else if(input.isNotEmpty() && input.containsOnly("0123456789.")) {
+            } else if(isPitch && input.isNotEmpty() &&
+                      input.containsOnly("+-0123456789")) {
+                next=juce::jlimit(-24.0,24.0,input.getDoubleValue());
+                valid=true;
+            } else if(!isPitch && input.isNotEmpty() &&
+                      input.containsOnly("0123456789.")) {
                 next=juce::jlimit(30.0,300.0,input.getDoubleValue());
                 valid=true;
             }
@@ -307,10 +313,15 @@ void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce
             refreshParameterReadouts();
         };
         addAndMakeVisible(c->valueLabel);
-        c->slider.setTooltip(isRoot?"Root note: turn knob, or double-click note value to enter C3, F#3 etc"
-                                   :"Sample BPM: turn knob, or double-click the number to enter BPM");
+        c->slider.setTooltip(isRoot?"Root note: turn knob, or double-click note value to enter C3 or F#3"
+                :isPitch?"PITCH: transpose -24 to +24 semitones independently of BPM. -12 = down one octave"
+                :"Sample BPM: original loop tempo; double-click the BPM number to type it");
     } else {
-        c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
+        c->slider.setTooltip(parameterId=="stretch"
+            ?"STRETCH: loop length relative to tempo. 1.0x = original, 2.0x = twice as long. Pitch stays fixed"
+            :parameterId=="crossfade"
+            ?"CROSSFADE: overlap softness between two 100ms grains. Higher = smoother/wider transitions"
+            :juce::String(title)+": drag to adjust (double-click for default)");
     }
     c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
     dials.push_back(std::move(c));
@@ -319,16 +330,18 @@ void AerytherAudioProcessorEditor::refreshParameterReadouts(){
     for(const auto& dial:dials) {
         const bool isRoot=dial->parameterID=="root";
         const bool isBpm=dial->parameterID=="sampleBpm";
+        const bool isPitch=dial->parameterID=="sampleTranspose";
         const bool isAmount=dial->parameterID.startsWith("mod") &&
                             dial->parameterID.endsWith("Amount");
-        if((!isRoot && !isBpm && !isAmount) || dial->valueLabel.isBeingEdited())continue;
+        if((!isRoot && !isBpm && !isPitch && !isAmount) || dial->valueLabel.isBeingEdited())continue;
         const auto* raw=processor.state.getRawParameterValue(dial->parameterID);
         if(!raw)continue;
         const auto n=raw->load();
         const auto value=isRoot
             ? juce::MidiMessage::getMidiNoteName(juce::jlimit(0,127,juce::roundToInt(n)),true,true,3)
             : isBpm ? juce::String(juce::jlimit(30,300,juce::roundToInt(n)))
-                    : juce::String(n,2);
+            : isPitch ? juce::String(juce::roundToInt(n))
+                      : juce::String(n,2);
         if(dial->valueLabel.getText()!=value)
             dial->valueLabel.setText(value,juce::dontSendNotification);
     }
