@@ -57,6 +57,20 @@ inline ReverbGains reverbGains(float mix) noexcept {
     const float m=std::clamp(mix,0.0f,1.0f);
     return {std::cos(halfPi*m),2.2f*std::sin(halfPi*m)};
 }
+// Original playback tempo and transposition are independent. The grain
+// anchor follows tempo; this ratio only changes pitch WITHIN each grain.
+inline double samplerPitchRatio(double semitones) noexcept {
+    return std::exp2(std::clamp(semitones,-48.0,48.0)/12.0);
+}
+// Steady grain boundaries prevent clicks when the CROSSFADE knob moves.
+// Higher CROSSFADE produces a broader, gently overlapping Hann window.
+inline float samplerGrainWeight(double age,double grainLength,float crossfade) noexcept {
+    if(grainLength<=0 || age<=0 || age>=grainLength)return 0.f;
+    constexpr double pi=3.14159265358979323846;
+    const double hann=0.5-0.5*std::cos(2*pi*age/grainLength);
+    const double width=std::clamp(double(crossfade),0.0,0.5);
+    return float(std::pow(hann, 8.0-14.4*width));
+}
 // Number of quarter-note beats per delay subdivision.
 inline double delayDivisionBeats(int index) noexcept {
     constexpr double beats[]{4.0,2.0,1.0,0.5,0.25,0.125,
