@@ -115,6 +115,13 @@ private:
     float subEnvelopeLevel = 0.0f; // sample-accurate anti-click fade for note-on/off
     double lastWaveNote = -1.0;
     double lfoPhases[2] {0.0, 0.0};
+    // Cross-modulation uses PREVIOUS block's two outputs to break circular
+    // dependencies. Both synced and free LFOs keep independent cycle counters.
+    float previousLfoValues[2] {0.f,0.f};
+    int64_t lfoFreeCycles[2] {0,0};
+    double lfoSyncOffsets[2] {0.0,0.0};
+    double lfoPreviousPpq[2] {0.0,0.0};
+    bool lfoSyncWasOn[2] {false,false};
     uint64_t transportFrameCounter = 0;
     std::atomic<float> playbackFraction{0.f};
     std::atomic<bool> playbackActive{false};
