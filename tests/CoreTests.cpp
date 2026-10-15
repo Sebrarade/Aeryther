@@ -49,6 +49,32 @@ int main() {
   assert(std::abs(sampleReadPosition(2,120,48000,100,48100,2)-48100)<0.001);
   assert(sampleReadPosition(1,0,48000,0,48000,0)==0);
   assert(std::isfinite(wetDry(.4f,.2f,.5f)));
+  // 75ms dual-tap TIME change: no discontinuity when moving the knob or
+  // selecting a different SYNC subdivision; preserve both ends exactly.
+  {
+      DelayTimeCrossfade fade;
+      fade.request(24000,3600);
+      assert(fade.fromSamples==24000 && !fade.isCrossfading());
+      fade.request(9600,3600);
+      assert(fade.isCrossfading() && fade.toSamples==9600);
+      assert(fade.blend()==0.f);
+      float last=fade.blend();
+      for(int sample=0;sample<3600;++sample) {
+          const float mix=fade.blend();
+          assert(mix>=last && mix>=0.f && mix<=1.f);
+          if(sample==1800)assert(std::abs(mix-.5f)<1.e-5f);
+          // A rapid second adjustment should not reset the running blend.
+          if(sample==900)fade.request(14000,3600);
+          last=mix;
+          fade.advance();
+      }
+      assert(!fade.isCrossfading() && fade.fromSamples==9600);
+      fade.request(14000,3600);
+      assert(fade.isCrossfading() && fade.fromSamples==9600 &&
+             fade.toSamples==14000);
+      fade.reset();
+      assert(fade.fromSamples==0 && !fade.isCrossfading());
+  }
   // LFO-to-LFO rate targets work both for Hz and host-synced beat lengths.
   assert(std::abs(lfoRateMultiplier(0.0)-1.0)<1.e-9);
   assert(std::abs(lfoRateMultiplier(1.0)-2.0)<1.e-9);
