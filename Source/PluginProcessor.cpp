@@ -93,7 +93,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
         auto pre="lfo"+juce::String(i);
         f((pre+"Rate").toRawUTF8(),(pre+" Rate").toRawUTF8(),0.002f,12,0.1f);
         f((pre+"Depth").toRawUTF8(),(pre+" Depth").toRawUTF8(),0,1,0);
-        c((pre+"Shape").toRawUTF8(),(pre+" Shape").toRawUTF8(),{"Sine","Triangle","Saw","Square"},0);
+        c((pre+"Shape").toRawUTF8(),(pre+" Shape").toRawUTF8(),{"Sine","Triangle","Saw","Square","Random"},0);
         b((pre+"Sync").toRawUTF8(),(pre+" Tempo Sync").toRawUTF8(),false);
         c((pre+"Division").toRawUTF8(),(pre+" Division").toRawUTF8(),
           {"4 Bars","2 Bars","1 Bar","1/2","1/4","1/8","1/16","1/32","1/64"},4);
@@ -129,7 +129,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
         "Sub Pitch","Sub Level","Sample Pitch","Sample Stretch","Sample Level",
         "Delay Time","Delay Feedback","Delay Mix",
         "Convolver Mix","Reverb Decay","Reverb Mix","Reverb Tone",
-        "EQ Low","EQ Mid","EQ High"
+        "EQ Low","EQ Mid","EQ High","LFO 1 Rate","LFO 2 Rate"
     };
     for(int i=1;i<=8;++i) {
         auto prefix="mod"+juce::String(i);
@@ -383,6 +383,14 @@ void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
     filterEnvelope.setSampleRate(sr);
     amplitudeModEnvelope.setSampleRate(sr);
     transportFrameCounter=0;
+    for(int k=0;k<2;++k){
+        lfoPhases[k]=0.0;
+        previousLfoValues[k]=0.f;
+        lfoFreeCycles[k]=0;
+        lfoSyncOffsets[k]=0.0;
+        lfoPreviousPpq[k]=0.0;
+        lfoSyncWasOn[k]=false;
+    }
 }
 void AerytherAudioProcessor::releaseResources() {}
 
@@ -462,7 +470,8 @@ float AerytherAudioProcessor::modulated(const char* destination,float original,f
         {"subPitch",12.f},{"subLevel",18.f},{"samplePitch",12.f},{"stretch",1.5f},
         {"sampleLevel",18.f},{"delayTime",0.75f},{"delayFeedback",0.5f},
         {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f},{"reverbTone",1.f},
-        {"eqLow",18.f},{"eqMid",18.f},{"eqHigh",18.f}
+        {"eqLow",18.f},{"eqMid",18.f},{"eqHigh",18.f},
+        {"lfo1Rate",2.f},{"lfo2Rate",2.f}
     };
     for(int i=1;i<=8;++i) {
         const auto prefix="mod"+juce::String(i);
@@ -766,18 +775,58 @@ void AerytherAudioProcessor::processBlock(juce::AudioBuffer<float>& output,juce:
     // MIDI event sample offsets are honored; transport looping follows the host's absolute timeline.
     double lfo[2]{};
     for(int k=0;k<2;++k) {
-        const float rate=get(k==0?"lfo1Rate":"lfo2Rate");
-        const int shape=int(get(k==0?"lfo1Shape":"lfo2Shape"));
+        const char* rateId=k==0?"lfo1Rate":"lfo2Rate";
+        const float rate=get(rateId);
+        const int shape=juce::jlimit(0,4,int(get(k==0?"lfo1Shape":"lfo2Shape")));
         const bool sync=enabled(k==0?"lfo1Sync":"lfo2Sync");
         const int division=juce::jlimit(0,8,int(get(k==0?"lfo1Division":"lfo2Division")));
         static constexpr double beatsPerCycle[]{16.,8.,4.,2.,1.,0.5,0.25,0.125,0.0625};
-        // Tempo-sync follows song PPQ so the LFO lands precisely on the host grid.
-        const double phase=sync?aeryther::wrapped(ppq/beatsPerCycle[division],1.0)
-                               :lfoPhases[k];
-        lfo[k]=(shape==0?std::sin(2*pi*phase):shape==1?4*std::abs(phase-0.5)-1:
-                shape==2?2*phase-1:phase<0.5?1:-1)*get(k==0?"lfo1Depth":"lfo2Depth");
-        if(!sync) lfoPhases[k]=aeryther::wrapped(phase+rate*num/currentSampleRate,1.0);
+
+        // Cross modulation is evaluated from the previous block to avoid
+        // circular signal dependencies when both LFOs target each other's rate.
+        // In SYNC mode, the division is the nominal speed, with modulation
+        // continuously scaling that tempo-derived speed by 1/4..4x.
+        const double octaveOffset=double(modulated(rateId,0.f,
+                                      previousLfoValues[0],previousLfoValues[1]));
+        const double multiplier=aeryther::lfoRateMultiplier(octaveOffset);
+        double phase=0.0;
+        int64_t cycle=0;
+        if(sync) {
+            const double baseCycles=ppq/beatsPerCycle[division];
+            if(!lfoSyncWasOn[k] || !playing ||
+               std::abs(ppq-lfoPreviousPpq[k])>beatsPerCycle[division]*2.0) {
+                // Re-align with the grid after seeking, loop jumps and sync ON.
+                lfoSyncOffsets[k]=0.0;
+            } else {
+                // Keep the host quarter-note grid at neutral Amount=0.
+                // The accumulated offset is just the extra/subtracted
+                // cycles caused by the LFO-to-LFO rate modulation.
+                const double beatDelta=ppq-lfoPreviousPpq[k];
+                lfoSyncOffsets[k]+=beatDelta/beatsPerCycle[division]*(multiplier-1.0);
+            }
+            const double totalCycles=baseCycles+lfoSyncOffsets[k];
+            phase=aeryther::wrapped(totalCycles,1.0);
+            cycle=static_cast<int64_t>(std::floor(totalCycles));
+            lfoPreviousPpq[k]=ppq;
+            lfoSyncWasOn[k]=true;
+        } else {
+            lfoSyncWasOn[k]=false;
+            phase=lfoPhases[k];
+            cycle=lfoFreeCycles[k];
+            const double advance=double(rate)*multiplier*double(num)/currentSampleRate;
+            const double ending=phase+advance;
+            lfoFreeCycles[k]+=static_cast<int64_t>(std::floor(ending));
+            lfoPhases[k]=aeryther::wrapped(ending,1.0);
+        }
+        const double shapeValue=shape==0?std::sin(2*pi*phase):
+                                shape==1?4*std::abs(phase-0.5)-1:
+                                shape==2?2*phase-1:
+                                shape==3?(phase<0.5?1.0:-1.0):
+                                double(aeryther::lfoRandomForCycle(cycle,k));
+        lfo[k]=shapeValue*get(k==0?"lfo1Depth":"lfo2Depth");
     }
+    previousLfoValues[0]=float(lfo[0]);
+    previousLfoValues[1]=float(lfo[1]);
 #if !defined(AERYTHER_FX)
     int rendered=0;
     for(const auto metadata:midi) {
