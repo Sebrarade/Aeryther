@@ -8,7 +8,7 @@ const juce::Colour pale=juce::Colour::fromRGB(235,241,249);
 const juce::Colour border=juce::Colour::fromRGB(205,215,229);
 const juce::Colour white=juce::Colour::fromRGB(248,250,254);
 #if defined(AERYTHER_FX)
-constexpr float uiScale=0.74f;
+constexpr float uiScale=0.70f;
 #else
 constexpr float uiScale=0.70f;
 #endif
@@ -86,7 +86,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     :juce::AudioProcessorEditor(&p),processor(p){
     setLookAndFeel(&look);setOpaque(true);
 #if defined(AERYTHER_FX)
-    setSize(798,355);
+    setSize(758,338);
     // FX keeps only the processing controls; no sampler or MIDI layers.
     addSwitch("sampleFilter","FILTER ON",{55,80,140,32});
     addChoice("filterType",{54,124,195,28});
@@ -117,7 +117,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("eqMid","MID",{637,384,92,82});
     addDial("eqHigh","HIGH",{786,384,92,82});
 #else
-    setSize(1064,791);
+    setSize(1033,714);
     browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
     // Top row: Sample (left), Wave (middle), Sub (right)
     // All SAMPLE dials share one row; BPM and ROOT get generous, readable
@@ -179,27 +179,28 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     for(int i=0;i<4;++i){const char* ids[]={"cutoff","resonance","drive","filterMix"};
         const char* names[]={"CUTOFF","RESONANCE","DRIVE","MIX"};
         addDial(ids[i],names[i],{53+i*113,835,71,73});}
-    addSwitch("delaySync","SYNC",{511,844,81,28});
-    addChoice("delayDivision",{602,844,118,28});
-    addSwitch("pingPong","PING-PONG",{730,844,106,28});
-    addChoice("shimmerMaxOctaves",{637,806,197,26});
+    // Two compact DELAY rows leave room for EQ without increasing window height.
+    addChoice("shimmerMaxOctaves",{637,805,197,26});
     for(int i=0;i<4;++i){
         const char* ids[]={"delayTime","delayFeedback","delayMix","delayShimmer"};
         const char* names[]={"TIME","FEEDBACK","MIX","SHIMMER"};
-        addDial(ids[i],names[i],{504+i*82,882,65,78});
+        addDial(ids[i],names[i],{504+i*82,836,65,64});
     }
+    addSwitch("delaySync","SYNC",{511,906,81,26});
+    addChoice("delayDivision",{602,906,118,26});
+    addSwitch("pingPong","PING-PONG",{730,906,106,26});
     addChoice("convMode",{877,830,295,29});
     addSwitch("convReverse","REVERSE",{1041,866,126,30});
     addDial("convMix","MIX",{1228,829,72,80});
     addDial("reverbDecay","DECAY",{1332,831,54,80});
     addDial("reverbTone","TONE",{1394,831,54,80});
     addDial("reverbMix","MIX",{1456,831,54,80});
-    // Dedicated three-band EQ, physically separated from both FX and MOD matrix.
-    addSwitch("eqEnabled","EQ ON",{55,1043,136,32});
-    addChoice("eqPosition",{216,1045,231,30});
-    addDial("eqLow","LOW",{530,1030,94,87});
-    addDial("eqMid","MID",{713,1030,94,87});
-    addDial("eqHigh","HIGH",{896,1030,94,87});
+    // Compact 3-band strip: EQ stays visible below the FX without a huge footer.
+    addSwitch("eqEnabled","EQ ON",{55,993,132,28});
+    addChoice("eqPosition",{216,993,231,28});
+    addDial("eqLow","LOW",{550,971,88,62});
+    addDial("eqMid","MID",{725,971,88,62});
+    addDial("eqHigh","HIGH",{900,971,88,62});
     refreshParameterReadouts();
     startTimerHz(24);
 #endif
@@ -395,10 +396,11 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     panel(g,{832,56,238,235},"REVERB");
     panel(g,{20,357,1050,119},"3 BAND EQ");
 #else
-    g.setColour(ink);g.setFont(juce::FontOptions(33.f));
-    g.drawFittedText("AERYTHER",{500,6,540,45},juce::Justification::centred,1);
-    g.setFont(juce::FontOptions(13.f));
-    g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
+    // Less vertical emphasis on branding; more emphasis on the working controls.
+    g.setColour(ink);g.setFont(juce::FontOptions(25.f));
+    g.drawFittedText("AERYTHER",{555,8,430,30},juce::Justification::centred,1);
+    g.setFont(juce::FontOptions(10.f));
+    g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{555,39,430,18},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
     g.drawText("BETA 0.3.8",juce::Rectangle<int>{1360,23,140,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
@@ -410,10 +412,10 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     panel(g,{1181,463,329,157},"LFO 2");
     panel(g,{35,627,1475,155},"MODULATION MATRIX");
     panel(g,{35,795,452,118},"FILTER");
-    panel(g,{493,795,350,184},"DELAY");
+    panel(g,{493,795,350,144},"DELAY");
     panel(g,{849,795,467,118},"CONVOLVER");
     panel(g,{1322,795,188,118},"REVERB");
-    panel(g,{35,989,1475,134},"3 BAND EQ");
+    panel(g,{35,948,1475,87},"3 BAND EQ");
     waveformRect={57,139,490,92};paintWaveform(g);
     // Minimal functional illustrations, drawn in JUCE rather than static imagery.
     auto graph=[&](juce::Rectangle<float> r, int kind, int traces){
