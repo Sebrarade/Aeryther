@@ -439,7 +439,7 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.setFont(juce::FontOptions(10.f));
     g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{555,39,430,18},juce::Justification::centred,1);
     g.setColour(blue);g.setFont(juce::FontOptions(16.f));
-    g.drawText("VERSION 1.1.1",juce::Rectangle<int>{1338,23,160,26},juce::Justification::centredRight);
+    g.drawText("BETA 1.2.0",juce::Rectangle<int>{1338,23,160,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
