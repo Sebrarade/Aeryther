@@ -137,6 +137,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
         c((prefix+"Target").toRawUTF8(),(prefix+" Target").toRawUTF8(),targets,0);
         f((prefix+"Amount").toRawUTF8(),(prefix+" Amount").toRawUTF8(),-1,1,0);
     }
+    // Append for backwards compatibility: existing sampleFine (+/- 100 cents)
+    // remains readable in old project states, but the UI exposes semitones.
+    f("sampleTranspose","Sample Pitch (Semitones)",-24.f,24.f,0.f,1.f);
     return {p.begin(),p.end()};
 }
 
@@ -380,6 +383,18 @@ void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
     heldNotes.fill(false);
     lastWaveNote=-1.0;
     blockCapacity=juce::jmax(64,maximumBlock);
+    sampleControls.resize(size_t(blockCapacity));
+    smoothStretch.reset(sr,0.085);
+    smoothPitch.reset(sr,0.065);
+    smoothCrossfade.reset(sr,0.045);
+    smoothReverbMix.reset(sr,0.045);
+    smoothStretch.setCurrentAndTargetValue(get("stretch"));
+    smoothPitch.setCurrentAndTargetValue(get("sampleTranspose")+get("sampleFine")/100.f);
+    smoothCrossfade.setCurrentAndTargetValue(get("crossfade"));
+    smoothReverbMix.setCurrentAndTargetValue(get("reverbMix"));
+    loopSamplerGrain.reset();
+    activeSamplerData=nullptr;
+    expectedSamplerFrame=-1;
     for(auto& voice:waveVoices)voice.envelope.setSampleRate(sr);
     for(auto& voice:sampleVoices)voice.envelope.setSampleRate(sr);
     // Keep enough delay history for a 1/1 note at very slow host tempos.
@@ -448,6 +463,7 @@ void AerytherAudioProcessor::handleMidi(const juce::MidiMessage& m) {
             for(auto& item:pool)if(!item.active){v=&item;break;}
             if(!v)v=&pool[0];
             v->active=true;v->note=note;v->samplePosition=0;
+            v->samplerGrain.reset();
             v->glidePitch=double(note);
             v->phases.fill(0);
             juce::ADSR::Parameters env;
@@ -744,18 +760,17 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
     reverb.process(wetScratch,
         clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f),
         clampf(modulated("reverbTone",get("reverbTone"),lfo1,lfo2),0.f,1.f));
-    const float rv=clampf(modulated("reverbMix",get("reverbMix"),lfo1,lfo2),0.f,1.f);
-    // Previous linear interpolation replaced dry signal with a quieter
-    // diffuse tail and caused a clear loudness dip at intermediate MIX values.
-    // Constant-power crossfade plus moderate wet makeup compensates its lower
-    // short-term energy. 100% wet remains true wet-only for sound design.
-    const auto gains=aeryther::reverbGains(rv);
-    const float dryGain=gains.dry,wetGain=gains.wet;
-    for(int ch=0;ch<2;++ch) {
-        for(int i=0;i<samples;++i) {
+    // Smooth MIX on individual audio samples to eliminate zipper noise when
+    // sweeping a large diffuse convolution/reverb tail. Preserve the musical
+    // constant-power gain law and previous wet makeup.
+    smoothReverbMix.setTargetValue(
+        clampf(modulated("reverbMix",get("reverbMix"),lfo1,lfo2),0.f,1.f));
+    for(int i=0;i<samples;++i) {
+        const auto gains=aeryther::reverbGains(smoothReverbMix.getNextValue());
+        for(int ch=0;ch<2;++ch) {
             const float dry=processed.getSample(ch,i);
             const float wet=wetScratch.getSample(ch,i);
-            output.addSample(ch,i,dryGain*dry+wetGain*wet);
+            output.addSample(ch,i,gains.dry*dry+gains.wet*wet);
         }
     }
 }
@@ -837,6 +852,18 @@ void AerytherAudioProcessor::processBlock(juce::AudioBuffer<float>& output,juce:
     }
     previousLfoValues[0]=float(lfo[0]);
     previousLfoValues[1]=float(lfo[1]);
+    // Generate parameter ramps once per block, not once per voice; all notes
+    // share exactly the same smooth pitch/stretch/crossfade trajectory.
+    smoothStretch.setTargetValue(clampf(modulated("stretch",get("stretch"),float(lfo[0]),float(lfo[1])),0.25f,4.f));
+    smoothPitch.setTargetValue(clampf(get("sampleTranspose")+get("sampleFine")/100.f+
+        modulated("samplePitch",0.f,float(lfo[0]),float(lfo[1])),-36.f,36.f));
+    smoothCrossfade.setTargetValue(clampf(get("crossfade"),0.f,0.5f));
+    for(int i=0;i<num;++i){
+        auto& control=sampleControls[size_t(i)];
+        control.stretch=smoothStretch.getNextValue();
+        control.pitch=smoothPitch.getNextValue();
+        control.crossfade=smoothCrossfade.getNextValue();
+    }
 #if !defined(AERYTHER_FX)
     int rendered=0;
     for(const auto metadata:midi) {
