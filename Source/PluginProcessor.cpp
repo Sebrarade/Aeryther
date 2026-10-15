@@ -647,16 +647,22 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
 void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int samples,float lfo1,float lfo2,
                                           double hostBpm) {
     convInput.clear();processed.clear();convWet.clear();
+    bool anyProcessedPath=false;
     for(int layer=0;layer<3;++layer) {
         const char* prefixes[]={"sample","wave","sub"};
         juce::String s(prefixes[layer]);
         auto& b=layerAudio[size_t(layer)];
         auto param=[&](const char* suffix){return routedParam(state,s+suffix)>0.5f;};
-        if(param("Direct")) {
+        const auto routes=aeryther::getPaths({
+            param("Filter"),param("Delay"),param("Conv"),param("Direct")});
+        // DIRECT taps the original layer in parallel; it never bypasses the
+        // selected effects, and it never changes their inputs.
+        if(routes.dry)
             for(int ch=0;ch<2;++ch)output.addFrom(ch,0,b,ch,0,samples);
-            continue;
-        }
-        if(param("Filter")){
+        // No Direct, Filter, Delay or Convolution: completely silent layer.
+        if(!routes.hasProcessedPath())continue;
+        anyProcessedPath=true;
+        if(routes.filtered){
             float originalCutoff=get("cutoff");
             float cutoff=clampf(originalCutoff*std::pow(2.0f,modulated("cutoff",0,lfo1,lfo2)*4.0f),30,18000);
             layerFilters[size_t(layer)].process(b,int(get("filterType")),cutoff,
@@ -665,7 +671,7 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
                  clampf(modulated("filterMix",get("filterMix"),lfo1,lfo2),0.f,1.f),
                  currentSampleRate);
         }
-        if(param("Delay")) {
+        if(routes.delayed) {
             wetScratch.makeCopyOf(b,true);
             const bool synced=enabled("delaySync");
             const float seconds=synced
@@ -682,9 +688,10 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
                 b.addFrom(ch,0,wetScratch,ch,0,samples,mix);
             }
         }
-        auto& dest=param("Conv")?convInput:processed;
+        auto& dest=routes.convolved?convInput:processed;
         for(int ch=0;ch<2;++ch)dest.addFrom(ch,0,b,ch,0,samples);
     }
+    if(!anyProcessedPath)return; // No effects enabled on any layer: do not emit lingering global FX.
     // EQ applies only to the convolution path: before the impulse response,
     // or to its wet result afterward. Dry/direct layers stay untouched.
     const bool eqOn=enabled("eqEnabled");
