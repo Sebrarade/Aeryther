@@ -10,7 +10,7 @@ const juce::Colour white=juce::Colour::fromRGB(248,250,254);
 #if defined(AERYTHER_FX)
 constexpr float uiScale=0.70f;
 #else
-constexpr float uiScale=0.70f;
+constexpr float uiScale=0.68f;
 #endif
 juce::Rectangle<int> compact(juce::Rectangle<int> r){
  return {juce::roundToInt(r.getX()*uiScale),juce::roundToInt(r.getY()*uiScale),
@@ -204,8 +204,21 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     refreshParameterReadouts();
     startTimerHz(24);
 #endif
+    // Native corner resizer; the ratio is locked, so every control, font and
+    // waveform scales together without reflow or collision.
+    setResizable(true,true);
+    if(auto* bounds=getConstrainer()) {
+        bounds->setFixedAspectRatio(double(defaultWidth)/double(defaultHeight));
+        bounds->setSizeLimits(
+            juce::roundToInt(defaultWidth*0.76),juce::roundToInt(defaultHeight*0.76),
+            juce::roundToInt(defaultWidth*1.42),juce::roundToInt(defaultHeight*1.42));
+    }
+    resized();
 }
 AerytherAudioProcessorEditor::~AerytherAudioProcessorEditor(){setLookAndFeel(nullptr);}
+float AerytherAudioProcessorEditor::contentScale() const noexcept {
+    return float(getWidth())/float(defaultWidth);
+}
 void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce::Rectangle<int> r){
     r=compact(r);
     auto c=std::make_unique<Dial>();
@@ -382,10 +395,10 @@ void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
 }
 void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.fillAll(juce::Colour::fromRGB(239,243,249));
-    g.addTransform(juce::AffineTransform::scale(uiScale));
+    g.addTransform(juce::AffineTransform::scale(uiScale*contentScale()));
 #if defined(AERYTHER_FX)
     g.setColour(ink);g.setFont(juce::FontOptions(23.f));
-    g.drawText("AERYTHER FX",juce::Rectangle<int>{0,7,getWidth(),40},juce::Justification::centred);
+    g.drawText("AERYTHER FX",juce::Rectangle<int>{0,7,1080,40},juce::Justification::centred);
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
     g.setColour(blue);g.setFont(juce::FontOptions(13.f));
@@ -454,9 +467,21 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
 #endif
 }
 void AerytherAudioProcessorEditor::resized(){
+    // Bounds are fixed in compact design coordinates. Scaling the children via
+    // their component transforms preserves text, knobs, hit testing and spacing,
+    // while painting uses the identical uniform scale factor.
+    const float s=contentScale();
+    const auto t=juce::AffineTransform::scale(s);
+    for(auto& dial:dials) {
+        dial->slider.setTransform(t);
+        dial->label.setTransform(t);
+        dial->valueLabel.setTransform(t);
+    }
+    for(auto& sw:switches)sw->button.setTransform(t);
+    for(auto& ch:choices)ch->box.setTransform(t);
 #if !defined(AERYTHER_FX)
-    // Header title is on the left; LOAD AUDIO belongs on the far right.
     browse.setBounds(compact({409,103,137,27}));
+    browse.setTransform(t);
 #endif
 }
 bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files){
@@ -484,11 +509,11 @@ void AerytherAudioProcessorEditor::setLoopMarker(float fraction,bool start){
                     juce::jlimit(juce::jmin(1.f,other+0.002f),1.f,fraction);
     param->beginChangeGesture();param->setValueNotifyingHost(param->convertTo0to1(fraction));
     param->endChangeGesture();
-    repaint(waveformRect);
+    repaint();
 }
 void AerytherAudioProcessorEditor::mouseDown(const juce::MouseEvent& e){
-    int x=juce::roundToInt(float(e.getPosition().x)/uiScale);
-    int y=juce::roundToInt(float(e.getPosition().y)/uiScale);
+    int x=juce::roundToInt(float(e.getPosition().x)/(uiScale*contentScale()));
+    int y=juce::roundToInt(float(e.getPosition().y)/(uiScale*contentScale()));
     if(!waveformRect.contains(x,y))return;
     float frac=float(x-waveformRect.getX())/waveformRect.getWidth();
     float a=processor.state.getRawParameterValue("loopStart")->load(),
@@ -497,8 +522,8 @@ void AerytherAudioProcessorEditor::mouseDown(const juce::MouseEvent& e){
     setLoopMarker(frac,draggingLoopStart);
 }
 void AerytherAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e){
-    int x=juce::roundToInt(float(e.getPosition().x)/uiScale);
-    int y=juce::roundToInt(float(e.getPosition().y)/uiScale);
+    int x=juce::roundToInt(float(e.getPosition().x)/(uiScale*contentScale()));
+    int y=juce::roundToInt(float(e.getPosition().y)/(uiScale*contentScale()));
     if(!waveformRect.expanded(60).contains(x,y))return;
     setLoopMarker(float(x-waveformRect.getX())/waveformRect.getWidth(),draggingLoopStart);
 }
