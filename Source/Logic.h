@@ -63,6 +63,32 @@ inline double delayDivisionBeats(int index) noexcept {
                               1.5,0.75,0.375,2.0/3.0,1.0/3.0,1.0/6.0};
     return beats[std::clamp(index,0,11)];
 }
+// Glitch-free tempo changes: keep two *fixed* delay taps and smoothly
+// crossfade between them instead of jumping the ring-buffer read head.
+// No allocations or pitch bending in the realtime thread.
+struct DelayTimeCrossfade {
+    int fromSamples=0,toSamples=0,remaining=0,total=0;
+    void reset() noexcept {fromSamples=toSamples=remaining=total=0;}
+    void request(int requested,int fadeSamples) noexcept {
+        requested=std::max(1,requested);
+        if(fromSamples==0){fromSamples=toSamples=requested;return;}
+        // Finish the active crossfade before starting a new one. This avoids
+        // discontinuities when TIME moves repeatedly during a knob gesture.
+        if(remaining>0 || requested==fromSamples)return;
+        toSamples=requested;
+        total=std::max(2,fadeSamples);
+        remaining=total;
+    }
+    bool isCrossfading() const noexcept {return remaining>0;}
+    float blend() const noexcept {
+        if(remaining<=0)return 0.f;
+        const float t=1.f-float(remaining)/float(total);
+        return t*t*(3.f-2.f*t); // smoothstep: zero slope at both boundaries
+    }
+    void advance() noexcept {
+        if(remaining>0 && --remaining==0)fromSamples=toSamples;
+    }
+};
 inline double tempoDelaySeconds(double bpm,int division) noexcept {
     const double safeBpm=std::clamp(bpm,30.0,300.0);
     return 60.0*delayDivisionBeats(division)/safeBpm;
