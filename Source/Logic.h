@@ -72,6 +72,21 @@ inline double tempoDelaySeconds(double bpm,int division) noexcept {
 inline int shimmerOctaveCeiling(int selected) noexcept {
     return std::clamp(selected,2,3);
 }
+// Rate modulation is expressed in octaves. This works for free-running
+// frequencies and tempo-synced note divisions alike. ±2 octaves => 1/4..4x.
+inline double lfoRateMultiplier(double octaves) noexcept {
+    return std::exp2(std::clamp(octaves,-2.0,2.0));
+}
+// Stateless deterministic sample-and-hold. The value changes only when the
+// (transport or free-running) LFO completes a cycle; no global RNG on audio thread.
+inline float lfoRandomForCycle(int64_t cycle,int index) noexcept {
+    uint64_t v=static_cast<uint64_t>(cycle) ^
+        (0x9e3779b97f4a7c15ULL * static_cast<uint64_t>(index+1));
+    v^=v>>30; v*=0xbf58476d1ce4e5b9ULL;
+    v^=v>>27; v*=0x94d049bb133111ebULL;
+    v^=v>>31;
+    return float((double(v>>32)/4294967295.0)*2.0-1.0);
+}
 inline float shimmerGrainWindow(float phase) noexcept {
     constexpr float pi=3.14159265358979323846f;
     const float s=std::sin(pi*phase);
