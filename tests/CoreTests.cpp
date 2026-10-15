@@ -97,6 +97,14 @@ int main() {
           assert(std::isfinite(w) && w>=0.f && w<=1.f);
       }
   }
+  // WAVE OCTAVE is now an independent matrix destination, spanning
+  // +/-2 octaves at full LFO depth while preserving the base knob.
+  assert(std::abs(waveOctaveToSemitones(0.0))<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(-2.0)+24.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(1.0)-12.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(3.0)-36.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(5.0)-36.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(-4.0)+36.0)<1.e-9);
   // LFO-to-LFO rate targets work both for Hz and host-synced beat lengths.
   assert(std::abs(lfoRateMultiplier(0.0)-1.0)<1.e-9);
   assert(std::abs(lfoRateMultiplier(1.0)-2.0)<1.e-9);
