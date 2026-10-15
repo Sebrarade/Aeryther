@@ -73,6 +73,7 @@ private:
         int cursor=0, grainCursor=0;
         double grainPhase=0.0;
         float shimmerSmoothed=0.0f;
+        aeryther::DelayTimeCrossfade timeCrossfade;
         void prepare(int maximumSamples,double sampleRate);
         void process(juce::AudioBuffer<float>& buffer,float seconds,float feedback,
                      double sampleRate,bool pingPong,float shimmer,int maxOctaves);
