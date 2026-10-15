@@ -21,10 +21,20 @@ struct Routing {
     bool filter = false, delay = false, conv = true, direct = false;
 };
 
-struct Paths { bool dry = false, filtered = false, delayed = false, convolved = false; };
+// Direct is an independent dry tap. The three effect flags form one serial
+// processed branch in the order FILTER -> DELAY -> CONV; this is deliberately
+// not three separately mixed effect sends. With all flags off, output is silent.
+struct Paths {
+    bool dry=false,filtered=false,delayed=false,convolved=false;
+    bool hasProcessedPath() const noexcept {
+        return filtered || delayed || convolved;
+    }
+    bool audible() const noexcept {
+        return dry || hasProcessedPath();
+    }
+};
 inline Paths getPaths(Routing p) noexcept {
-    if (p.direct) return {true, false, false, false};
-    return {!p.conv, p.filter, p.delay, p.conv};
+    return {p.direct,p.filter,p.delay,p.conv};
 }
 inline bool midiTriggersSample(bool loopPlay) noexcept { return !loopPlay; }
 inline bool midiTriggersWave(bool) noexcept { return true; }
