@@ -114,6 +114,12 @@ inline int shimmerOctaveCeiling(int selected) noexcept {
 }
 // Rate modulation is expressed in octaves. This works for free-running
 // frequencies and tempo-synced note divisions alike. ±2 octaves => 1/4..4x.
+// The WAVE octave modulation target maps the knob's octave units
+// to semitone pitch offsets. Keep the oscillator within the +/-3 octave
+// range of its existing OCTAVE knob.
+inline double waveOctaveToSemitones(double octaves) noexcept {
+    return 12.0*std::clamp(octaves,-3.0,3.0);
+}
 inline double lfoRateMultiplier(double octaves) noexcept {
     return std::exp2(std::clamp(octaves,-2.0,2.0));
 }
