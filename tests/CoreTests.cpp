@@ -75,6 +75,28 @@ int main() {
       fade.reset();
       assert(fade.fromSamples==0 && !fade.isCrossfading());
   }
+  // Independent time and pitch: -12 semitones is half sample frequency,
+  // while the 115 BPM loop timeline remains at the original beat rate.
+  assert(std::abs(samplerPitchRatio(0.0)-1.0)<1.e-9);
+  assert(std::abs(samplerPitchRatio(-12.0)-0.5)<1.e-9);
+  assert(std::abs(samplerPitchRatio(12.0)-2.0)<1.e-9);
+  assert(std::abs(samplerPitchRatio(-24.0)-0.25)<1.e-9);
+  assert(std::abs(samplerPitchRatio(24.0)-4.0)<1.e-9);
+  const double originalBpm=115.0,hostBpm=115.0;
+  const double sourceStep=48000.0/48000.0*hostBpm/originalBpm;
+  assert(std::abs(sourceStep-1.0)<1.e-9);
+  assert(std::abs(sourceStep*samplerPitchRatio(-12.0)-0.5)<1.e-9);
+  // Crossfade controls window softness only: endpoints stay at zero and
+  // grain clocks remain fixed, so adjusting it cannot shift playback heads.
+  for(float overlap:{0.f,0.08f,0.25f,0.5f}) {
+      assert(samplerGrainWeight(0,4800.0,overlap)==0.f);
+      assert(samplerGrainWeight(4800.0,4800.0,overlap)==0.f);
+      assert(std::abs(samplerGrainWeight(2400.0,4800.0,overlap)-1.f)<1.e-6f);
+      for(int age=1;age<4800;age+=121) {
+          const auto w=samplerGrainWeight(age,4800.0,overlap);
+          assert(std::isfinite(w) && w>=0.f && w<=1.f);
+      }
+  }
   // LFO-to-LFO rate targets work both for Hz and host-synced beat lengths.
   assert(std::abs(lfoRateMultiplier(0.0)-1.0)<1.e-9);
   assert(std::abs(lfoRateMultiplier(1.0)-2.0)<1.e-9);
