@@ -129,7 +129,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AerytherAudioProcessor::make
         "Sub Pitch","Sub Level","Sample Pitch","Sample Stretch","Sample Level",
         "Delay Time","Delay Feedback","Delay Mix",
         "Convolver Mix","Reverb Decay","Reverb Mix","Reverb Tone",
-        "EQ Low","EQ Mid","EQ High","LFO 1 Rate","LFO 2 Rate"
+        "EQ Low","EQ Mid","EQ High","LFO 1 Rate","LFO 2 Rate",
+        "Wave Octave"
     };
     for(int i=1;i<=8;++i) {
         auto prefix="mod"+juce::String(i);
@@ -497,7 +498,7 @@ float AerytherAudioProcessor::modulated(const char* destination,float original,f
         {"sampleLevel",18.f},{"delayTime",0.75f},{"delayFeedback",0.5f},
         {"delayMix",1.f},{"convMix",1.f},{"reverbDecay",40.f},{"reverbMix",1.f},{"reverbTone",1.f},
         {"eqLow",18.f},{"eqMid",18.f},{"eqHigh",18.f},
-        {"lfo1Rate",2.f},{"lfo2Rate",2.f}
+        {"lfo1Rate",2.f},{"lfo2Rate",2.f},{"waveOctave",2.f}
     };
     for(int i=1;i<=8;++i) {
         const auto prefix="mod"+juce::String(i);
@@ -524,6 +525,11 @@ void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce:
     const double glideSeconds=double(get("waveGlide"));
     const double glideStep=glideSeconds>0.0005 ?
         1.0-std::exp(-1.0/(currentSampleRate*glideSeconds)):1.0;
+    // WAVE OCTAVE is an independent bipolar matrix target. At Amount=1
+    // a full-depth LFO can move the octave knob by +/-2 octaves, without
+    // changing the existing WAVE PITCH destination or the base knob value.
+    const double octaveSemitones=aeryther::waveOctaveToSemitones(
+        double(modulated("waveOctave",get("waveOctave"),lfo1,lfo2)));
     const double pitchOffset=double(get("waveFine"))/100.0+
         double(modulated("wavePitch",0.f,lfo1,lfo2));
     for(auto& v:waveVoices)if(v.active) {
@@ -531,7 +537,7 @@ void AerytherAudioProcessor::renderOscillators(juce::AudioBuffer<float>& w,juce:
             float amp=v.envelope.getNextSample();
             if(!v.envelope.isActive()){v.active=false;break;}
             v.glidePitch += (double(v.note)-v.glidePitch)*glideStep;
-            const double note=v.glidePitch+12.0*get("waveOctave")+pitchOffset;
+            const double note=v.glidePitch+octaveSemitones+pitchOffset;
             float left=0,right=0;
             for(int u=0;u<unison;++u) {
                 const double spread=unison>1?(double(u)/(unison-1)*2.0-1.0):0.0;
