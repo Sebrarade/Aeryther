@@ -43,7 +43,12 @@ public:
     void setStateInformation(const void*, int) override;
     bool isBusesLayoutSupported(const BusesLayout&) const override;
 
-    bool loadSample(const juce::File& file);
+    bool loadSample(const juce::File& file,bool resetLoopRange=true);
+    void clearSample();
+    bool hasSample() const noexcept {return bool(std::atomic_load(&sample));}
+    uint64_t sampleContentRevision() const noexcept {
+        return sampleRevision.load(std::memory_order_relaxed);
+    }
     juce::String sampleFileName() const;
     std::vector<float> waveformPeaks(int columns) const;
     float sampleReadhead() const noexcept {return playbackFraction.load(std::memory_order_relaxed);}
@@ -105,6 +110,7 @@ private:
     };
 
     std::shared_ptr<const SampleData> sample;
+    std::atomic<uint64_t> sampleRevision{0};
     mutable juce::CriticalSection fileNameMutex;
     juce::String loadedSamplePath;
     std::array<SynthVoice, 24> waveVoices, sampleVoices;
