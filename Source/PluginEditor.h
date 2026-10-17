@@ -57,10 +57,12 @@ private:
     std::vector<std::unique_ptr<Switch>> switches;
     std::vector<std::unique_ptr<Choice>> choices;
     juce::TextButton browse{"LOAD AUDIO"};
+    juce::TextButton clearSampleButton{"CLEAR"};
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> waveformRect;
     std::vector<float> cachedPeaks;
     juce::String cachedSampleFile;
+    uint64_t cachedSampleRevision=~uint64_t(0);
     bool draggingLoopStart=false;
     void addDial(const char* id,const char* title,juce::Rectangle<int> bounds);
     void addSwitch(const char* id,const char* title,juce::Rectangle<int> bounds);
