@@ -105,6 +105,22 @@ int main() {
   assert(std::abs(waveOctaveToSemitones(3.0)-36.0)<1.e-9);
   assert(std::abs(waveOctaveToSemitones(5.0)-36.0)<1.e-9);
   assert(std::abs(waveOctaveToSemitones(-4.0)+36.0)<1.e-9);
+  // CPU optimization must retain the exact orthonormal FDN matrix.
+  {
+    const float source[8]={0.12f,-0.2f,0.33f,0.04f,0.7f,-0.41f,0.03f,0.88f};
+    float fast[8]{}; for(int i=0;i<8;++i)fast[i]=source[i];
+    hadamard8(fast);
+    for(int i=0;i<8;++i) {
+      float reference=0.f;
+      for(int j=0;j<8;++j) {
+        unsigned v=unsigned(i&j), parity=0;
+        while(v){parity^=(v&1u);v>>=1u;}
+        reference+=(parity?-source[j]:source[j]);
+      }
+      reference*=0.3535533905932738f;
+      assert(std::abs(fast[i]-reference)<1.e-5f);
+    }
+  }
   // LFO-to-LFO rate targets work both for Hz and host-synced beat lengths.
   assert(std::abs(lfoRateMultiplier(0.0)-1.0)<1.e-9);
   assert(std::abs(lfoRateMultiplier(1.0)-2.0)<1.e-9);
