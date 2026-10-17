@@ -63,6 +63,12 @@ public:
         const float lowPass=1.f-std::exp(-2.f*juce::MathConstants<float>::pi*dampingCutoff/float(sr));
         const float tiltGain=juce::Decibels::decibelsToGain((brightness-.5f)*16.f);
         const float highPassCoefficient=1.f-std::exp(-2.f*juce::MathConstants<float>::pi*1600.f/float(sr));
+        // Reverb line lengths and RT60 do not change within one audio block.
+        // Computing these eight exp() values per sample caused needless DSP load.
+        std::array<float,8> lineGains{};
+        for(int k=0;k<8;++k)
+            lineGains[size_t(k)]=std::exp(-6.9077553f*
+                (float(lines[size_t(k)].delay)/float(sr))/rt60);
         for(int i=0;i<audio.getNumSamples();++i) {
             float l=audio.getSample(0,i),r=audio.getSample(1,i);
             for(int k=0;k<3;++k) {
@@ -83,21 +89,23 @@ public:
                 if(d.phase>=2.0*juce::MathConstants<double>::pi)
                     d.phase-=2.0*juce::MathConstants<double>::pi;
             }
-            // Orthonormal Hadamard feedback matrix.
+            // Exact 8x8 Walsh-Hadamard FDN mixing using 3 butterfly stages
+            // instead of 64 parity tests and branches for every output sample.
+            // This is algebraically the same orthonormal feedback matrix.
             float feedback[8]{};
-            for(int k=0;k<8;++k) {
-                float sum=0.f;
-                for(int j=0;j<8;++j){
-                    unsigned bits=unsigned(k&j),odd=0u;
-                    while(bits){odd^=(bits&1u);bits>>=1u;}
-                    sum+=(odd?-y[j]:y[j]);
-                }
-                feedback[k]=sum*.353553390593f;
-            }
+            for(int k=0;k<8;++k)feedback[k]=y[k];
+            for(int span=1;span<8;span*=2)
+                for(int base=0;base<8;base+=2*span)
+                    for(int j=0;j<span;++j){
+                        const float a=feedback[base+j],b=feedback[base+j+span];
+                        feedback[base+j]=a+b;
+                        feedback[base+j+span]=a-b;
+                    }
+            for(auto& gain:feedback)gain*=.353553390593f;
             for(int k=0;k<8;++k) {
                 auto& d=lines[size_t(k)];
                 d.damped+=lowPass*(feedback[k]-d.damped);
-                const float g=std::exp(-6.9077553f*(float(d.delay)/float(sr))/rt60);
+                const float g=lineGains[size_t(k)];
                 d.samples[size_t(d.write)]=((k&1)?r:l)*.21f+std::tanh(g*d.damped);
                 if(++d.write>=int(d.samples.size()))d.write=0;
             }
