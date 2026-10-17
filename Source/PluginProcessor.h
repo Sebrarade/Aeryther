@@ -121,7 +121,18 @@ private:
     std::array<juce::AudioBuffer<float>, 3> layerAudio;
     juce::AudioBuffer<float> convInput, processed, convWet, wetScratch;
     // Four original hall modes, each with NORMAL and REVERSE impulse responses.
-    std::array<juce::dsp::Convolution, 8> convolutions;
+    // Two-stage non-uniform FFT: zero latency for the early IR while the
+    // giant 34-54s tail is partitioned efficiently in 4096-sample blocks.
+    // Preserves the complete original impulse responses, including REVERSE.
+    std::array<juce::dsp::Convolution,8> convolutions{
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}},
+        juce::dsp::Convolution{juce::dsp::Convolution::NonUniform{4096}}};
     AerytherSpaciousReverb reverb;
     AerytherConvolverEQ convolverEQ;
     juce::ADSR filterEnvelope, amplitudeModEnvelope;
