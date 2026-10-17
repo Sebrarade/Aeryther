@@ -155,6 +155,18 @@ inline double wrapped(double position, double length) noexcept {
     const auto result = std::fmod(position, length);
     return result < 0 ? result + length : result;
 }
+// Map a forward-running granular playhead into the selected sample direction.
+// Uses inclusive sample bounds so REVERSE starts on the final sample rather
+// than outside the buffer. PING-PONG reflects without repeating endpoints.
+inline double directedSamplePosition(double unwrapped,double start,double end,int direction) noexcept {
+    const double span=std::max(1.0,end-start-1.0);
+    if(direction==1)return end-1.0-wrapped(unwrapped,span+1.0);
+    if(direction==2){
+        const double t=wrapped(unwrapped,2.0*span);
+        return start+(t<=span?t:2.0*span-t);
+    }
+    return start+wrapped(unwrapped,span+1.0);
+}
 inline double sampleReadPosition(double beatPosition, double sourceBpm, double sourceRate,
                                  double start, double end, int direction) noexcept {
     const auto length = end - start;
