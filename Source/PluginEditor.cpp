@@ -123,7 +123,18 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("eqHigh","HIGH",{850,384,92,82});
 #else
     setSize(1033,714);
-    browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
+    browse.onClick=[this]{browseForAudio();};
+    browse.setTooltip("Replace the loaded sample with another WAV, AIFF or FLAC");
+    addAndMakeVisible(browse);
+    clearSampleButton.onClick=[this]{
+        processor.clearSample();
+        cachedSampleFile.clear();
+        cachedPeaks.clear();
+        cachedSampleRevision=~uint64_t(0);
+        repaint();
+    };
+    clearSampleButton.setTooltip("Remove the current sample without removing other layers");
+    addAndMakeVisible(clearSampleButton);
     // Top row: Sample (left), Wave (middle), Sub (right)
     // All SAMPLE dials share one row; BPM and ROOT get generous, readable
     // numeric text boxes below the knobs without overlapping other controls.
@@ -387,9 +398,11 @@ void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
     auto r=waveformRect.toFloat();
     g.setColour(pale);g.fillRoundedRectangle(r,6);
     const auto name=processor.sampleFileName();
-    if(name!=cachedSampleFile || cachedPeaks.empty()){
+    const auto revision=processor.sampleContentRevision();
+    if(revision!=cachedSampleRevision){
         cachedPeaks=processor.waveformPeaks(240);
         cachedSampleFile=name;
+        cachedSampleRevision=revision;
     }
     const auto& peaks=cachedPeaks;
     auto hasAudio=name.isNotEmpty();
@@ -505,8 +518,11 @@ void AerytherAudioProcessorEditor::resized(){
     for(auto& sw:switches)sw->button.setTransform(t);
     for(auto& ch:choices)ch->box.setTransform(t);
 #if !defined(AERYTHER_FX)
-    browse.setBounds(compact({409,103,137,27}));
+    browse.setBounds(compact({392,103,91,29}));
     browse.setTransform(t);
+    clearSampleButton.setBounds(compact({488,103,65,29}));
+    clearSampleButton.setTransform(t);
+    clearSampleButton.setEnabled(processor.hasSample());
 #endif
 }
 bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files){
@@ -517,11 +533,25 @@ void AerytherAudioProcessorEditor::filesDropped(const juce::StringArray& files,i
     if(files.size() && processor.loadSample(juce::File(files[0])))repaint();
 }
 void AerytherAudioProcessorEditor::browseForAudio(){
-    chooser=std::make_unique<juce::FileChooser>("Load audio",juce::File{},"*.wav;*.aiff;*.aif;*.flac");
-    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [safe=juce::Component::SafePointer<AerytherAudioProcessorEditor>(this)](const juce::FileChooser& fc){
-            if(safe && fc.getResult().existsAsFile()){
-                safe->processor.loadSample(fc.getResult());safe->repaint();
+    // Offer a new file every time; selection replaces the previous audio.
+    // Native file chooser keeps access permissions on macOS.
+    chooser=std::make_unique<juce::FileChooser>(
+        "Load or replace a sample",juce::File{},"*.wav;*.aif;*.aiff;*.flac");
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe=juce::Component::SafePointer<AerytherAudioProcessorEditor>(this)]
+        (const juce::FileChooser& fc){
+            if(!safe)return;
+            const auto chosen=fc.getResult();
+            if(chosen == juce::File{})return; // User cancelled.
+            if(!safe->processor.loadSample(chosen)){
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::WarningIcon,"Sample not loaded",
+                    "Please choose an existing WAV, AIFF or FLAC shorter than 2 minutes.");
+            } else {
+                safe->cachedSampleRevision=~uint64_t(0);
+                safe->repaint();
+                safe->resized();
             }
         });
 }
