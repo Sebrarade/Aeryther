@@ -117,6 +117,8 @@ private:
     SamplerGrain loopSamplerGrain;
     const SampleData* activeSamplerData=nullptr;
     int64_t expectedSamplerFrame=-1;
+    int activeSamplerDirection=-1,previousSamplerDirection=-1;
+    int directionFadeSamples=0,directionFadeRemaining=0;
     juce::SmoothedValue<float,juce::ValueSmoothingTypes::Linear> smoothStretch,smoothPitch,smoothCrossfade,smoothReverbMix;
     struct SampleControl { float stretch=1.f,pitch=0.f,crossfade=0.08f; };
     std::vector<SampleControl> sampleControls;
