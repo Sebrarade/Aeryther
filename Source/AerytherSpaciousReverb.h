@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include "Logic.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -94,14 +95,7 @@ public:
             // This is algebraically the same orthonormal feedback matrix.
             float feedback[8]{};
             for(int k=0;k<8;++k)feedback[k]=y[k];
-            for(int span=1;span<8;span*=2)
-                for(int base=0;base<8;base+=2*span)
-                    for(int j=0;j<span;++j){
-                        const float a=feedback[base+j],b=feedback[base+j+span];
-                        feedback[base+j]=a+b;
-                        feedback[base+j+span]=a-b;
-                    }
-            for(auto& gain:feedback)gain*=.353553390593f;
+            aeryther::hadamard8(feedback);
             for(int k=0;k<8;++k) {
                 auto& d=lines[size_t(k)];
                 d.damped+=lowPass*(feedback[k]-d.damped);
