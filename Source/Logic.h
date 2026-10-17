@@ -112,6 +112,18 @@ inline double tempoDelaySeconds(double bpm,int division) noexcept {
 inline int shimmerOctaveCeiling(int selected) noexcept {
     return std::clamp(selected,2,3);
 }
+// Fast orthonormal 8-line FDN mixing. Exact Walsh-Hadamard matrix:
+ // H[k,j] = (-1)^popcount(k & j) / sqrt(8).
+inline void hadamard8(float (&values)[8]) noexcept {
+    for(int span=1;span<8;span*=2)
+        for(int base=0;base<8;base+=2*span)
+            for(int j=0;j<span;++j) {
+                const float a=values[base+j], b=values[base+j+span];
+                values[base+j]=a+b;
+                values[base+j+span]=a-b;
+            }
+    for(auto& value:values)value*=0.3535533905932738f;
+}
 // Rate modulation is expressed in octaves. This works for free-running
 // frequencies and tempo-synced note divisions alike. ±2 octaves => 1/4..4x.
 // The WAVE octave modulation target maps the knob's octave units
