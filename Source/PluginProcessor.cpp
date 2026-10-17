@@ -396,6 +396,9 @@ void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
     loopSamplerGrain.reset();
     activeSamplerData=nullptr;
     expectedSamplerFrame=-1;
+    activeSamplerDirection=previousSamplerDirection=-1;
+    directionFadeSamples=juce::jmax(1,int(sr*0.025));
+    directionFadeRemaining=0;
     for(auto& voice:waveVoices)voice.envelope.setSampleRate(sr);
     for(auto& voice:sampleVoices)voice.envelope.setSampleRate(sr);
     // Keep enough delay history for a 1/1 note at very slow host tempos.
@@ -425,7 +428,7 @@ bool AerytherAudioProcessor::loadSample(const juce::File& file,bool resetLoopRan
     juce::AudioFormatManager formats;formats.registerBasicFormats();
     auto reader=std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(file));
     if(!reader || reader->sampleRate<=0.0 || reader->lengthInSamples<2 ||
-       reader->lengthInSamples>reader->sampleRate*120.0 || reader->numChannels==0)
+       reader->lengthInSamples>reader->sampleRate*300.0 || reader->numChannels==0)
         return false;
     auto next=std::make_shared<SampleData>();
     next->rate=reader->sampleRate;
@@ -630,6 +633,23 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
     const float gain=juce::Decibels::decibelsToGain(
         clampf(modulated("sampleLevel",get("sampleLevel"),lfo1,lfo2),-60,6));
     const int direction=juce::jlimit(0,2,int(get("direction")));
+    // Direction changes are audible immediately but crossfade over 25ms to
+    // avoid jumping discontinuously between forward and reverse playheads.
+    if(activeSamplerDirection<0)
+        activeSamplerDirection=previousSamplerDirection=direction;
+    else if(direction!=activeSamplerDirection){
+        previousSamplerDirection=activeSamplerDirection;
+        activeSamplerDirection=direction;
+        directionFadeRemaining=directionFadeSamples;
+    }
+    float directionBlend=1.f;
+    auto stepDirectionFade=[&]{
+        if(directionFadeRemaining>0){
+            --directionFadeRemaining;
+            if(directionFadeRemaining==0)
+                previousSamplerDirection=activeSamplerDirection;
+        }
+    };
     // 50ms fixed grain hop, 100ms fixed grain length. Neither knob changes
     // grain boundaries, avoiding the previous discontinuous grain rescheduling.
     const int hop=juce::jmax(64,int(currentSampleRate*.05));
@@ -643,10 +663,16 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
     }
 
     auto readSource=[&](int channel,double unwrapped)->float {
-        const double position=aeryther::directedSamplePosition(
-            unwrapped,double(start),double(end),direction);
-        return readInterpolated(data->samples,channel,
+        const auto position=aeryther::directedSamplePosition(
+            unwrapped,double(start),double(end),activeSamplerDirection);
+        const float next=readInterpolated(data->samples,channel,
             juce::jlimit(double(start),double(end-1),position));
+        if(directionBlend>=1.f)return next;
+        const auto oldPosition=aeryther::directedSamplePosition(
+            unwrapped,double(start),double(end),previousSamplerDirection);
+        const float old=readInterpolated(data->samples,channel,
+            juce::jlimit(double(start),double(end-1),oldPosition));
+        return old*(1.f-directionBlend)+next*directionBlend;
     };
 
     // One stereo grain pair is rendered and normalised per output frame.
@@ -701,6 +727,9 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
             loopSamplerGrain.reset(aeryther::wrapped(sourceAtStart,loopSize));
         }
         for(int i=first;i<first+length;++i) {
+            directionBlend=directionFadeRemaining>0
+                ? 1.f-float(directionFadeRemaining)/float(directionFadeSamples)
+                : 1.f;
             const auto controls=sampleControls[size_t(i)];
             beginGrain(loopSamplerGrain,double(controls.pitch));
             const auto stereo=readGrains(loopSamplerGrain,controls.crossfade);
@@ -709,6 +738,7 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
             const double step=sourcePerOutput*juce::jmax(30.0,hostBpm)/
                          (juce::jmax(30.0,srcBpm)*double(controls.stretch));
             advanceGrain(loopSamplerGrain,step);
+            stepDirectionFade();
             if(loopSamplerGrain.sourcePosition>=loopSize)
                 loopSamplerGrain.sourcePosition=aeryther::wrapped(
                     loopSamplerGrain.sourcePosition,loopSize);
@@ -724,6 +754,9 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
             auto& grain=voice.samplerGrain;
             const double voiceOffset=double(voice.note)-double(get("root"));
             for(int i=first;i<first+length;++i) {
+                directionBlend=directionFadeRemaining>0
+                    ? 1.f-float(directionFadeRemaining)/float(directionFadeSamples)
+                    : 1.f;
                 const auto controls=sampleControls[size_t(i)];
                 const float amp=voice.envelope.getNextSample();
                 if(!voice.envelope.isActive() || grain.sourcePosition>=loopSize) {
@@ -738,6 +771,7 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
                 out.addSample(0,i,stereo[0]*amp*ending*gain);
                 out.addSample(1,i,stereo[1]*amp*ending*gain);
                 advanceGrain(grain,sourcePerOutput/double(controls.stretch));
+                stepDirectionFade();
                 voice.samplePosition+=1.0;
             }
             if(voice.active){
