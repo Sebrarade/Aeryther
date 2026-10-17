@@ -1,4 +1,6 @@
 #include "Logic.h"
+#include "HugeHallImpulse.h"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -12,12 +14,25 @@ int main() {
   assert(wetDry(.8f,.2f,1.f)==.2f);
   assert(wetDry(.8f,.2f,0.f)==.8f);
   assert(wetDry(.8f,.2f,2.f)==.2f);
-  for (bool f : {false,true}) for (bool d : {false,true}) for (bool c : {false,true}) {
-    const auto p = getPaths({f,d,c,true});
-    assert(p.dry && !p.filtered && !p.delayed && !p.convolved);
+  // Every route combination must have independent DIRECT and explicit
+  // serial effect flags. All-off must be silent (no implicit bypass).
+  for (bool f : {false,true})
+  for (bool d : {false,true})
+  for (bool c : {false,true})
+  for (bool direct : {false,true}) {
+    const auto p=getPaths({f,d,c,direct});
+    assert(p.dry==direct);
+    assert(p.filtered==f);
+    assert(p.delayed==d);
+    assert(p.convolved==c);
+    assert(p.hasProcessedPath()==(f||d||c));
+    assert(p.audible()==(direct||f||d||c));
   }
-  assert(getPaths({true,true,true,false}).convolved);
-  assert(!getPaths({true,true,true,false}).dry);
+  assert(!getPaths({false,false,false,false}).audible());
+  assert(getPaths({true,true,true,true}).dry &&
+         getPaths({true,true,true,true}).convolved);
+  assert(getPaths({false,false,false,true}).dry &&
+         !getPaths({false,false,false,true}).hasProcessedPath());
   assert(midiTriggersSample(false));
   assert(!midiTriggersSample(true));
   assert(midiTriggersWave(true)&&midiTriggersSub(true));
@@ -33,6 +48,176 @@ int main() {
   assert(std::abs(sampleReadPosition(1,120,48000,100,48100,1)-24100)<0.001);
   assert(std::abs(sampleReadPosition(2,120,48000,100,48100,2)-48100)<0.001);
   assert(sampleReadPosition(1,0,48000,0,48000,0)==0);
+  // A 10-frame test loop: forward, reverse and bounced playback must
+  // differ, use legal sample indices and reflect exactly at the endpoints.
+  for(int i=0;i<40;++i)for(int direction=0;direction<3;++direction){
+      const auto position=directedSamplePosition(double(i),0.0,10.0,direction);
+      assert(position>=0.0 && position<=9.0);
+  }
+  assert(directedSamplePosition(0.0,0.0,10.0,0)==0.0);
+  assert(directedSamplePosition(0.0,0.0,10.0,1)==9.0);
+  assert(directedSamplePosition(1.0,0.0,10.0,1)==8.0);
+  assert(directedSamplePosition(9.0,0.0,10.0,2)==9.0);
+  assert(directedSamplePosition(10.0,0.0,10.0,2)==8.0);
+  assert(directedSamplePosition(18.0,0.0,10.0,2)==0.0);
+  assert(directedSamplePosition(5.0,40.0,50.0,0)==45.0);
+  assert(directedSamplePosition(5.0,40.0,50.0,1)==44.0);
+
   assert(std::isfinite(wetDry(.4f,.2f,.5f)));
+  // 75ms dual-tap TIME change: no discontinuity when moving the knob or
+  // selecting a different SYNC subdivision; preserve both ends exactly.
+  {
+      DelayTimeCrossfade fade;
+      fade.request(24000,3600);
+      assert(fade.fromSamples==24000 && !fade.isCrossfading());
+      fade.request(9600,3600);
+      assert(fade.isCrossfading() && fade.toSamples==9600);
+      assert(fade.blend()==0.f);
+      float last=fade.blend();
+      for(int sample=0;sample<3600;++sample) {
+          const float mix=fade.blend();
+          assert(mix>=last && mix>=0.f && mix<=1.f);
+          if(sample==1800)assert(std::abs(mix-.5f)<1.e-5f);
+          // A rapid second adjustment should not reset the running blend.
+          if(sample==900)fade.request(14000,3600);
+          last=mix;
+          fade.advance();
+      }
+      assert(!fade.isCrossfading() && fade.fromSamples==9600);
+      fade.request(14000,3600);
+      assert(fade.isCrossfading() && fade.fromSamples==9600 &&
+             fade.toSamples==14000);
+      fade.reset();
+      assert(fade.fromSamples==0 && !fade.isCrossfading());
+  }
+  // Independent time and pitch: -12 semitones is half sample frequency,
+  // while the 115 BPM loop timeline remains at the original beat rate.
+  assert(std::abs(samplerPitchRatio(0.0)-1.0)<1.e-9);
+  assert(std::abs(samplerPitchRatio(-12.0)-0.5)<1.e-9);
+  assert(std::abs(samplerPitchRatio(12.0)-2.0)<1.e-9);
+  assert(std::abs(samplerPitchRatio(-24.0)-0.25)<1.e-9);
+  assert(std::abs(samplerPitchRatio(24.0)-4.0)<1.e-9);
+  const double originalBpm=115.0,hostBpm=115.0;
+  const double sourceStep=48000.0/48000.0*hostBpm/originalBpm;
+  assert(std::abs(sourceStep-1.0)<1.e-9);
+  assert(std::abs(sourceStep*samplerPitchRatio(-12.0)-0.5)<1.e-9);
+  // Crossfade controls window softness only: endpoints stay at zero and
+  // grain clocks remain fixed, so adjusting it cannot shift playback heads.
+  for(float overlap:{0.f,0.08f,0.25f,0.5f}) {
+      assert(samplerGrainWeight(0,4800.0,overlap)==0.f);
+      assert(samplerGrainWeight(4800.0,4800.0,overlap)==0.f);
+      assert(std::abs(samplerGrainWeight(2400.0,4800.0,overlap)-1.f)<1.e-6f);
+      for(int age=1;age<4800;age+=121) {
+          const auto w=samplerGrainWeight(age,4800.0,overlap);
+          assert(std::isfinite(w) && w>=0.f && w<=1.f);
+      }
+  }
+  // WAVE OCTAVE is now an independent matrix destination, spanning
+  // +/-2 octaves at full LFO depth while preserving the base knob.
+  assert(std::abs(waveOctaveToSemitones(0.0))<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(-2.0)+24.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(1.0)-12.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(3.0)-36.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(5.0)-36.0)<1.e-9);
+  assert(std::abs(waveOctaveToSemitones(-4.0)+36.0)<1.e-9);
+  // CPU optimization must retain the exact orthonormal FDN matrix.
+  {
+    const float source[8]={0.12f,-0.2f,0.33f,0.04f,0.7f,-0.41f,0.03f,0.88f};
+    float fast[8]{}; for(int i=0;i<8;++i)fast[i]=source[i];
+    hadamard8(fast);
+    for(int i=0;i<8;++i) {
+      float reference=0.f;
+      for(int j=0;j<8;++j) {
+        unsigned v=unsigned(i&j), parity=0;
+        while(v){parity^=(v&1u);v>>=1u;}
+        reference+=(parity?-source[j]:source[j]);
+      }
+      reference*=0.3535533905932738f;
+      assert(std::abs(fast[i]-reference)<1.e-5f);
+    }
+  }
+  // LFO-to-LFO rate targets work both for Hz and host-synced beat lengths.
+  assert(std::abs(lfoRateMultiplier(0.0)-1.0)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(1.0)-2.0)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(-1.0)-0.5)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(20.0)-4.0)<1.e-9);
+  assert(std::abs(lfoRateMultiplier(-20.0)-0.25)<1.e-9);
+  const double bpm=120.0;
+  const double quarterCycle=60.0/bpm;
+  const double sixteenthCycle=quarterCycle/4.0;
+  assert(std::abs(quarterCycle/lfoRateMultiplier(2.0)-0.125)<1.e-9);
+  assert(std::abs(sixteenthCycle/lfoRateMultiplier(-2.0)-0.5)<1.e-9);
+  for(int k=0;k<2;++k) {
+      const auto v=lfoRandomForCycle(23,k);
+      assert(std::isfinite(v) && v>=-1.f && v<=1.f);
+      assert(lfoRandomForCycle(23,k)==v);
+      assert(lfoRandomForCycle(24,k)!=v);
+  }
+  assert(lfoRandomForCycle(123,0)!=lfoRandomForCycle(123,1));
+  // Delay sync: at 120 BPM 1/4 = 500ms, dotted 1/8 = 375ms,
+  // triplet 1/8 = 166.67ms; safe BPM bounds and shape windows.
+  assert(std::abs(tempoDelaySeconds(120.0,2)-0.5)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(120.0,7)-0.375)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(120.0,10)-1.0/6.0)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(60.0,0)-4.0)<1.e-7);
+  assert(std::abs(tempoDelaySeconds(0.0,0)-8.0)<1.e-7);
+  // Reject invalid ceiling choices and never allow feedback above +3 octaves.
+  assert(shimmerOctaveCeiling(-1)==2);
+  assert(shimmerOctaveCeiling(2)==2);
+  assert(shimmerOctaveCeiling(3)==3);
+  assert(shimmerOctaveCeiling(99)==3);
+  assert(std::abs(shimmerGrainWindow(0.f))<1.e-6f);
+  assert(std::abs(shimmerGrainWindow(.5f)-1.f)<1.e-6f);
+  for (int i=0;i<100;++i){
+      float p=float(i)/100.f;
+      const float p2=std::fmod(p+.5f,1.f);
+      assert(std::abs(shimmerGrainWindow(p)+shimmerGrainWindow(p2)-1.f)<1.e-5f);
+  }
+  // Reverb 0% must preserve dry at unity, while intermediate positions use
+  // an equal-power fade instead of the old loudness-dropping linear blend.
+  assert(std::abs(reverbGains(0.f).dry-1.f)<0.00001f);
+  assert(std::abs(reverbGains(0.f).wet)<0.00001f);
+  assert(std::abs(reverbGains(1.f).dry)<0.00001f);
+  assert(std::abs(reverbGains(1.f).wet-2.2f)<0.00001f);
+  assert(reverbGains(.5f).dry>.70f && reverbGains(.5f).wet>1.55f);
+  assert(std::isfinite(reverbGains(.67f).wet));
+  const auto energy=[](const std::vector<float>& audio,int a,int b) {
+    const int from=std::clamp(a,0,int(audio.size()));
+    const int end=std::clamp(b,from,int(audio.size()));
+    double sum=0;
+    for(int i=from;i<end;++i)sum+=double(audio[size_t(i)])*audio[size_t(i)];
+    return end>from?std::sqrt(sum/double(end-from)):0.0;
+  };
+  for(int mode=0;mode<4;++mode) {
+    const auto profile=hugeHallProfiles[size_t(mode)];
+    assert(profile.durationSeconds>=30.0);
+    assert(profile.bloomSeconds>=0.8);
+    auto left=generateHugeHallImpulse(mode,0,4000.0);
+    auto right=generateHugeHallImpulse(mode,1,4000.0);
+    assert(left.size()==size_t(std::ceil(profile.durationSeconds*4000.0)));
+    assert(left.size()==right.size());
+    assert(energy(left,0,300)==0.0);
+    assert(energy(left,4000*3,4000*6)>0.001);
+    assert(energy(left,4000*18,4000*22)>0.0000001);
+    assert(energy(left,int(left.size())-4000,int(left.size()))<
+           energy(left,4000*4,4000*7));
+    assert(energy(right,4000*3,4000*6)>0.001);
+    bool distinct=false;
+    for(int i=4000*5;i<4000*6;++i)if(left[size_t(i)]!=right[size_t(i)]) {
+      distinct=true;break;
+    }
+    assert(distinct);
+    // Full reverse inverts the acoustic impulse only and preserves the same
+    // stereo response and length. A second reverse restores the original.
+    auto before=left;
+    reverseHugeHallImpulse(left);
+    assert(left.size()==before.size());
+    for(size_t i : {size_t(0),left.size()/3,left.size()-1})
+        assert(left[i]==before[left.size()-1-i]);
+    reverseHugeHallImpulse(left);
+    for(size_t i : {size_t(0),left.size()/3,left.size()-1})
+        assert(left[i]==before[i]);
+  }
+  std::cout << "Huge-hall IR: 4 modes, long tails, stereo decorrelation passed\\n";
   std::cout << "Aeryther source tests: defaults/routing/wet/transport/direction passed\n";
 }

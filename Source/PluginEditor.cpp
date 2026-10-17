@@ -7,6 +7,15 @@ const juce::Colour blue=juce::Colour::fromRGB(69,143,218);
 const juce::Colour pale=juce::Colour::fromRGB(235,241,249);
 const juce::Colour border=juce::Colour::fromRGB(205,215,229);
 const juce::Colour white=juce::Colour::fromRGB(248,250,254);
+#if defined(AERYTHER_FX)
+constexpr float uiScale=0.70f;
+#else
+constexpr float uiScale=0.68f;
+#endif
+juce::Rectangle<int> compact(juce::Rectangle<int> r){
+ return {juce::roundToInt(r.getX()*uiScale),juce::roundToInt(r.getY()*uiScale),
+ juce::roundToInt(r.getWidth()*uiScale),juce::roundToInt(r.getHeight()*uiScale)};
+}
 }
 AerytherAudioProcessorEditor::LightLook::LightLook(){
     setColour(juce::ComboBox::backgroundColourId,pale);
@@ -16,6 +25,9 @@ AerytherAudioProcessorEditor::LightLook::LightLook(){
     setColour(juce::TextButton::textColourOffId,ink);
     setColour(juce::Label::textColourId,ink);
     setColour(juce::Slider::textBoxTextColourId,ink);
+    setColour(juce::Slider::textBoxBackgroundColourId,pale);
+    setColour(juce::Slider::textBoxOutlineColourId,border);
+    setColour(juce::ComboBox::arrowColourId,blue);
     setColour(juce::PopupMenu::backgroundColourId,white);
     setColour(juce::PopupMenu::textColourId,ink);
 }
@@ -46,13 +58,39 @@ void AerytherAudioProcessorEditor::LightLook::drawToggleButton(juce::Graphics& g
     g.setColour(b.getToggleState()?juce::Colour::fromRGB(208,227,247):pale);
     g.fillRoundedRectangle(r,5);
     g.setColour(b.getToggleState()?blue:border);g.drawRoundedRectangle(r,5,1);
-    g.setColour(ink);g.setFont(12);g.drawFittedText(b.getButtonText(),b.getLocalBounds(),juce::Justification::centred,1);
+    g.setColour(ink);g.setFont(juce::FontOptions(14.f));
+    g.drawFittedText(b.getButtonText(),b.getLocalBounds().reduced(2,0),juce::Justification::centred,1);
+}
+void AerytherAudioProcessorEditor::LightLook::drawLinearSlider(
+    juce::Graphics& g,int x,int y,int width,int height,float sliderPos,
+    float,float,const juce::Slider::SliderStyle style,juce::Slider& slider) {
+    if(style!=juce::Slider::LinearHorizontal) {
+        juce::LookAndFeel_V4::drawLinearSlider(g,x,y,width,height,sliderPos,0.f,0.f,style,slider);
+        return;
+    }
+    // Bipolar modulation: deep blue centre line, blue level and small circular thumb.
+    const auto area=juce::Rectangle<float>{float(x),float(y),float(width),float(height)};
+    g.setColour(pale);
+    g.fillRoundedRectangle(area.reduced(0.f,2.f),5.f);
+    const float midX=area.getCentreX();
+    const float yMid=area.getCentreY();
+    g.setColour(border);
+    g.fillRoundedRectangle(area.getX()+6.f,yMid-2.f,area.getWidth()-12.f,4.f,2.f);
+    const float pos=juce::jlimit(area.getX()+7.f,area.getRight()-7.f,sliderPos);
+    g.setColour(blue.withAlpha(.9f));
+    if(std::abs(pos-midX)>1.f)
+        g.fillRoundedRectangle(juce::jmin(midX,pos),yMid-2.f,
+                               std::abs(midX-pos),4.f,2.f);
+    g.setColour(ink.withAlpha(.65f));
+    g.drawLine(midX,yMid-6.f,midX,yMid+6.f,1.f);
+    g.setColour(blue);
+    g.fillEllipse(pos-5.f,yMid-5.f,10.f,10.f);
 }
 AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcessor& p)
     :juce::AudioProcessorEditor(&p),processor(p){
     setLookAndFeel(&look);setOpaque(true);
 #if defined(AERYTHER_FX)
-    setSize(1090,300);
+    setSize(758,338);
     // FX keeps only the processing controls; no sampler or MIDI layers.
     addSwitch("sampleFilter","FILTER ON",{55,80,140,32});
     addChoice("filterType",{54,124,195,28});
@@ -61,35 +99,66 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("filterMix","MIX",{235,161,75,85});
     addSwitch("sampleDelay","DELAY ON",{340,80,140,32});
     addSwitch("pingPong","PING PONG",{486,80,125,32});
-    addDial("delayTime","TIME",{334,161,75,85});
-    addDial("delayFeedback","FEEDBACK",{426,161,75,85});
-    addDial("delayMix","MIX",{516,161,75,85});
+    addSwitch("delaySync","SYNC",{337,125,78,28});
+    addChoice("delayDivision",{426,125,178,28});
+    addDial("delayTime","TIME",{330,179,60,83});
+    addDial("delayFeedback","FEEDBACK",{402,179,60,83});
+    addDial("delayMix","MIX",{474,179,60,83});
+    addDial("delayShimmer","SHIMMER",{546,179,60,83});
+    addChoice("shimmerMaxOctaves",{337,282,267,26});
     addSwitch("sampleConv","CONV ON",{641,80,110,32});
     addChoice("convMode",{636,126,160,28});
+    addSwitch("convReverse","REVERSE",{638,174,87,27});
     addDial("convMix","MIX",{735,172,75,80});
-    addDial("reverbDecay","DECAY",{848,161,78,85});
-    addDial("reverbMix","MIX",{949,161,78,85});
+    addDial("reverbDecay","DECAY",{846,161,66,85});
+    addDial("reverbTone","TONE",{923,161,66,85});
+    addDial("reverbMix","MIX",{999,161,66,85});
     addSwitch("sampleDirect","DIRECT",{640,258,140,30});
+    // Shared convolver EQ strip: EQ colour follows PRE / POST convolution.
+    addSwitch("eqEnabled","EQ ON",{49,396,114,32});
+    addChoice("eqPosition",{193,398,236,30});
+    // Three dials share equal widths and generous horizontal spacing.
+    addDial("eqLow","LOW",{510,384,92,82});
+    addDial("eqMid","MID",{680,384,92,82});
+    addDial("eqHigh","HIGH",{850,384,92,82});
 #else
-    setSize(1540,900);
-    browse.onClick=[this]{browseForAudio();};addAndMakeVisible(browse);
+    setSize(1033,714);
+    browse.setButtonText("LOAD");
+    browse.onClick=[this]{browseForAudio();};
+    browse.setTooltip("Replace the loaded sample with another WAV, AIFF or FLAC");
+    addAndMakeVisible(browse);
+    clearSampleButton.onClick=[this]{
+        processor.clearSample();
+        cachedSampleFile.clear();
+        cachedPeaks.clear();
+        cachedSampleRevision=~uint64_t(0);
+        clearSampleButton.setEnabled(false);
+        repaint();
+    };
+    clearSampleButton.setTooltip("Remove the current sample without removing other layers");
+    addAndMakeVisible(clearSampleButton);
     // Top row: Sample (left), Wave (middle), Sub (right)
-    auto sampleKnobs=std::array<const char*,5>{"root","sampleFine","stretch","crossfade","sampleLevel"};
-    auto sampleLabels=std::array<const char*,5>{"ROOT","FINE","STRETCH","CROSSFADE","LEVEL"};
-    for(int i=0;i<5;++i)addDial(sampleKnobs[i],sampleLabels[i],{57+i*100,296,70,77});
-    addSwitch("loopPlay","LOOP PLAY",{54,247,112,31});
-    addDial("sampleBpm","BPM",{175,238,66,67});
-    addChoice("direction",{260,248,270,28});
-    auto waveKnobs=std::array<const char*,5>{"unison","detune","width","waveOctave","waveLevel"};
-    auto waveLabels=std::array<const char*,5>{"UNISON","DETUNE","WIDTH","OCTAVE","LEVEL"};
-    for(int i=0;i<5;++i)addDial(waveKnobs[i],waveLabels[i],{606+i*110,292,72,80});
+    // All SAMPLE dials share one row; BPM and ROOT get generous, readable
+    // numeric text boxes below the knobs without overlapping other controls.
+    auto sampleKnobs=std::array<const char*,6>{"root","sampleBpm","sampleTranspose",
+                                              "stretch","crossfade","sampleLevel"};
+    auto sampleLabels=std::array<const char*,6>{"ROOT","BPM","PITCH","STRETCH",
+                                               "CROSSFADE","LEVEL"};
+    for(int i=0;i<6;++i)
+        addDial(sampleKnobs[i],sampleLabels[i],{56+i*84,290,70,96});
+    addSwitch("loopPlay","LOOP PLAY",{54,245,112,31});
+    addChoice("direction",{260,246,270,28});
+    auto waveKnobs=std::array<const char*,7>{"unison","detune","width","waveOctave","waveFine","waveGlide","waveLevel"};
+    auto waveLabels=std::array<const char*,7>{"UNISON","DETUNE","WIDTH","OCTAVE","FINE","GLIDE","LEVEL"};
+    // Seven evenly spaced controls fit entirely inside WAVE (576..1185).
+    for(int i=0;i<7;++i)addDial(waveKnobs[i],waveLabels[i],{592+i*82,292,70,80});
     addChoice("waveShape",{705,180,215,30});
     addChoice("subShape",{1275,180,185,30});
     for(int i=0;i<3;++i){const char* ids[]={"subOctave","subTune","subLevel"};
        const char* names[]={"OCTAVE","TUNE","LEVEL"};
        addDial(ids[i],names[i],{1203+i*111,291,72,83});}
     const char* routing[3]={"sample","wave","sub"};
-    const int startX[3]={55,575,1200}, widths[3]={110,119,79};
+    const int startX[3]={55,584,1200}, widths[3]={110,119,79};
     for(int k=0;k<3;++k)for(int i=0;i<4;++i){
         const juce::String prefix=routing[k];
         const char* suffix[]={"Filter","Delay","Conv","Direct"};
@@ -106,55 +175,211 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     for(int j=0;j<2;++j){
         int xx=840+j*343;
         juce::String prefix=j==0?"lfo1":"lfo2";
-        addDial((prefix+"Rate").toRawUTF8(),"RATE",{xx,526,68,76});
+        addDial((prefix+"Rate").toRawUTF8(),"FREE RATE",{xx,526,68,76});
         addDial((prefix+"Depth").toRawUTF8(),"DEPTH",{xx+100,526,68,76});
-        addChoice((prefix+"Shape").toRawUTF8(),{xx+175,544,137,28});
+        // Controls occupy separate vertical columns, below the LFO heading.
+        // Avoid decorative waveforms underneath live ComboBoxes and dials.
+        addChoice((prefix+"Shape").toRawUTF8(),{xx+187,507,126,27});
+        addSwitch((prefix+"Sync").toRawUTF8(),"SYNC",{xx+187,541,75,26});
+        addChoice((prefix+"Division").toRawUTF8(),{xx+187,578,126,27});
     }
-    for(int i=1;i<=4;++i){
+    // Eight modulation assignments, arranged in two four-row banks.
+    // Every control is inside the MODULATION MATRIX card and clear of its title.
+    for(int i=1;i<=8;++i){
         juce::String prefix="mod"+juce::String(i);
-        int y=656+(i-1)*29;
-        addChoice((prefix+"Source").toRawUTF8(),{290,y,250,26});
-        addDial((prefix+"Amount").toRawUTF8(),"",{562,y-7,72,37});
-        addChoice((prefix+"Target").toRawUTF8(),{780,y,335,26});
+        const int bank=(i-1)/4, row=(i-1)%4;
+        const int y=681+row*24, dx=bank*730;
+        addChoice((prefix+"Source").toRawUTF8(),{100+dx,y,195,22});
+        addDial((prefix+"Amount").toRawUTF8(),"",{305+dx,y,134,22});
+        addChoice((prefix+"Target").toRawUTF8(),{452+dx,y,240,22});
     }
-    addChoice("filterType",{194,786,210,29});
+    addChoice("filterType",{194,805,210,29});
     for(int i=0;i<4;++i){const char* ids[]={"cutoff","resonance","drive","filterMix"};
         const char* names[]={"CUTOFF","RESONANCE","DRIVE","MIX"};
-        addDial(ids[i],names[i],{53+i*113,816,71,73});}
-    for(int i=0;i<3;++i){const char* ids[]={"delayTime","delayFeedback","delayMix"};
-        const char* names[]={"TIME","FEEDBACK","MIX"};
-        addDial(ids[i],names[i],{523+i*105,814,72,76});}
-    addSwitch("pingPong","PING-PONG",{729,780,112,30});
-    addChoice("convMode",{877,798,295,31});
-    addDial("convMix","MIX",{1228,808,72,82});
-    addDial("reverbDecay","DECAY",{1345,812,72,80});
-    addDial("reverbMix","MIX",{1440,812,72,80});
-    startTimerHz(3);
+        addDial(ids[i],names[i],{53+i*113,835,71,73});}
+    // Two compact DELAY rows leave room for EQ without increasing window height.
+    addChoice("shimmerMaxOctaves",{637,805,197,26});
+    for(int i=0;i<4;++i){
+        const char* ids[]={"delayTime","delayFeedback","delayMix","delayShimmer"};
+        const char* names[]={"TIME","FEEDBACK","MIX","SHIMMER"};
+        addDial(ids[i],names[i],{504+i*82,836,65,64});
+    }
+    addSwitch("delaySync","SYNC",{511,906,81,26});
+    addChoice("delayDivision",{602,906,118,26});
+    addSwitch("pingPong","PING-PONG",{730,906,106,26});
+    addChoice("convMode",{877,830,295,29});
+    addSwitch("convReverse","REVERSE",{1041,866,126,30});
+    addDial("convMix","MIX",{1228,829,72,80});
+    addDial("reverbDecay","DECAY",{1332,831,54,80});
+    addDial("reverbTone","TONE",{1394,831,54,80});
+    addDial("reverbMix","MIX",{1456,831,54,80});
+    // Compact 3-band strip: EQ stays visible below the FX without a huge footer.
+    addSwitch("eqEnabled","EQ ON",{55,993,132,28});
+    addChoice("eqPosition",{216,993,231,28});
+    // Evenly distribute LOW / MID / HIGH across the strip, not clustered left.
+    addDial("eqLow","LOW",{620,971,88,62});
+    addDial("eqMid","MID",{917,971,88,62});
+    addDial("eqHigh","HIGH",{1214,971,88,62});
+    refreshParameterReadouts();
+    startTimerHz(24);
 #endif
+    // Native corner resizer; the ratio is locked, so every control, font and
+    // waveform scales together without reflow or collision.
+    setResizable(true,true);
+    if(auto* bounds=getConstrainer()) {
+        bounds->setFixedAspectRatio(double(defaultWidth)/double(defaultHeight));
+        bounds->setSizeLimits(
+            juce::roundToInt(defaultWidth*0.76),juce::roundToInt(defaultHeight*0.76),
+            juce::roundToInt(defaultWidth*1.42),juce::roundToInt(defaultHeight*1.42));
+    }
+    resized();
 }
 AerytherAudioProcessorEditor::~AerytherAudioProcessorEditor(){setLookAndFeel(nullptr);}
+float AerytherAudioProcessorEditor::contentScale() const noexcept {
+    return float(getWidth())/float(defaultWidth);
+}
 void AerytherAudioProcessorEditor::addDial(const char* id,const char* title,juce::Rectangle<int> r){
-    auto c=std::make_unique<Dial>(); c->name=title;
-    c->slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
-    c->slider.setBounds(r.removeFromTop(r.getHeight()-19));
+    r=compact(r);
+    auto c=std::make_unique<Dial>();
+    const auto parameterId=juce::String(id);
+    c->name=title;
+    c->parameterID=parameterId;
+    const bool matrixAmount=parameterId.startsWith("mod") &&
+                             parameterId.endsWith("Amount");
+    const bool hasReadout=parameterId=="root" || parameterId=="sampleBpm" || parameterId=="sampleTranspose";
+    c->slider.setSliderStyle(matrixAmount?juce::Slider::LinearHorizontal:
+                                           juce::Slider::RotaryHorizontalVerticalDrag);
+    if(matrixAmount) {
+        // The previous JUCE textbox rendered white-on-white squares in Ableton.
+        // Draw the value in our own high-contrast Label, outside the slider.
+        c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        c->slider.setBounds(r.getX(),r.getY(),r.getWidth()-37,r.getHeight());
+    } else if(hasReadout) {
+        // Never rely on a Slider's embedded textbox. On the compact UI its
+        // text can be clipped or drawn underneath the rotary slider.
+        // Title, rotary knob and independently painted value occupy separate rows.
+        c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        c->slider.setBounds(r.getX()+5,r.getY()+15,
+                            juce::jmax(20,r.getWidth()-10),38);
+    } else {
+        c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        c->slider.setBounds(r.removeFromTop(juce::jmax(10,r.getHeight()-14)));
+    }
     addAndMakeVisible(c->slider);
-    c->label.setText(title,juce::dontSendNotification);c->label.setFont(11);
-    c->label.setJustificationType(juce::Justification::centred);
-    c->label.setBounds(r.getX()-10,r.getBottom()-19,r.getWidth()+20,19);
-    addAndMakeVisible(c->label);
+
+    if(!matrixAmount) {
+        c->label.setText(title,juce::dontSendNotification);
+        const float fontSize=juce::String(title).length()>7?11.25f:12.5f;
+        c->label.setFont(juce::Font(juce::FontOptions(fontSize)));
+        c->label.setJustificationType(juce::Justification::centred);
+        c->label.setBounds(r.getX()-3,r.getY(),r.getWidth()+6,14);
+        addAndMakeVisible(c->label);
+    }
+
+    if(matrixAmount) {
+        c->valueLabel.setText("0.00",juce::dontSendNotification);
+        c->valueLabel.setJustificationType(juce::Justification::centredRight);
+        c->valueLabel.setFont(juce::Font(juce::FontOptions(13.25f)));
+        c->valueLabel.setColour(juce::Label::textColourId,ink);
+        c->valueLabel.setColour(juce::Label::backgroundColourId,pale);
+        c->valueLabel.setBounds(r.getRight()-37,r.getY(),37,r.getHeight());
+        c->valueLabel.setInterceptsMouseClicks(false,false);
+        addAndMakeVisible(c->valueLabel);
+    }
+    if(hasReadout) {
+        c->valueLabel.setText(parameterId=="root"?"C3":parameterId=="sampleBpm"?"120":"0",juce::dontSendNotification);
+        c->valueLabel.setJustificationType(juce::Justification::centred);
+        c->valueLabel.setFont(juce::Font(juce::FontOptions(14.5f)));
+        c->valueLabel.setColour(juce::Label::textColourId,ink);
+        c->valueLabel.setColour(juce::Label::backgroundColourId,pale);
+        c->valueLabel.setColour(juce::Label::outlineColourId,border);
+        c->valueLabel.setBounds(r.getX()-3,r.getY()+54,r.getWidth()+6,19);
+        c->valueLabel.setEditable(false,true,false); // double-click to type BPM or note
+        auto* control=c.get();
+        const bool isRoot=parameterId=="root";
+        const bool isPitch=parameterId=="sampleTranspose";
+        c->valueLabel.onTextChange=[this,control,isRoot,isPitch]{
+            const auto input=control->valueLabel.getText().trim();
+            double next=control->slider.getValue();
+            bool valid=false;
+            if(isRoot) {
+                for(int n=0;n<128;++n) {
+                    if(juce::MidiMessage::getMidiNoteName(n,true,true,3)
+                            .equalsIgnoreCase(input)) {
+                        next=double(n);valid=true;break;
+                    }
+                }
+                if(!valid && input.containsOnly("0123456789") && input.isNotEmpty()) {
+                    next=juce::jlimit(0.0,127.0,input.getDoubleValue());
+                    valid=true;
+                }
+            } else if(isPitch && input.isNotEmpty() &&
+                      input.containsOnly("+-0123456789")) {
+                next=juce::jlimit(-24.0,24.0,input.getDoubleValue());
+                valid=true;
+            } else if(!isPitch && input.isNotEmpty() &&
+                      input.containsOnly("0123456789.")) {
+                next=juce::jlimit(30.0,300.0,input.getDoubleValue());
+                valid=true;
+            }
+            if(valid)control->slider.setValue(next,juce::sendNotificationSync);
+            refreshParameterReadouts();
+        };
+        addAndMakeVisible(c->valueLabel);
+        c->slider.setTooltip(isRoot?"Root note: turn knob, or double-click note value to enter C3 or F#3"
+                :isPitch?"PITCH: transpose -24 to +24 semitones independently of BPM. -12 = down one octave"
+                :"Sample BPM: original loop tempo; double-click the BPM number to type it");
+    } else {
+        c->slider.setTooltip(parameterId=="stretch"
+            ?"STRETCH: loop length relative to tempo. 1.0x = original, 2.0x = twice as long. Pitch stays fixed"
+            :parameterId=="crossfade"
+            ?"CROSSFADE: overlap softness between two 100ms grains. Higher = smoother/wider transitions"
+            :juce::String(title)+": drag to adjust (double-click for default)");
+    }
     c->attachment=std::make_unique<SlideAttach>(processor.state,id,c->slider);
-    c->slider.setTooltip(juce::String(title)+": drag to adjust (double-click for default)");
     dials.push_back(std::move(c));
 }
+void AerytherAudioProcessorEditor::refreshParameterReadouts(){
+    for(const auto& dial:dials) {
+        const bool isRoot=dial->parameterID=="root";
+        const bool isBpm=dial->parameterID=="sampleBpm";
+        const bool isPitch=dial->parameterID=="sampleTranspose";
+        const bool isAmount=dial->parameterID.startsWith("mod") &&
+                            dial->parameterID.endsWith("Amount");
+        if((!isRoot && !isBpm && !isPitch && !isAmount) || dial->valueLabel.isBeingEdited())continue;
+        const auto* raw=processor.state.getRawParameterValue(dial->parameterID);
+        if(!raw)continue;
+        const auto n=raw->load();
+        const auto value=isRoot
+            ? juce::MidiMessage::getMidiNoteName(juce::jlimit(0,127,juce::roundToInt(n)),true,true,3)
+            : isBpm ? juce::String(juce::jlimit(30,300,juce::roundToInt(n)))
+            : isPitch ? juce::String(juce::roundToInt(n))
+                      : juce::String(n,2);
+        if(dial->valueLabel.getText()!=value)
+            dial->valueLabel.setText(value,juce::dontSendNotification);
+    }
+}
+void AerytherAudioProcessorEditor::timerCallback(){
+    refreshParameterReadouts();
+    repaint();
+}
 void AerytherAudioProcessorEditor::addSwitch(const char* id,const char* title,juce::Rectangle<int> r){
+    r=compact(r);
     auto c=std::make_unique<Switch>();c->button.setButtonText(title);c->button.setBounds(r);
+    const auto route=juce::String(id);
+    if(route.endsWith("Direct"))
+        c->button.setTooltip("Parallel dry path: adds the original layer beside the processed sound");
+    else if(route.endsWith("Filter") || route.endsWith("Delay") || route.endsWith("Conv"))
+        c->button.setTooltip("Processed path runs in order: FILTER > DELAY > CONVOLVER");
     addAndMakeVisible(c->button);
     c->attachment=std::make_unique<BoolAttach>(processor.state,id,c->button);
     switches.push_back(std::move(c));
 }
 void AerytherAudioProcessorEditor::addChoice(const char* id,juce::Rectangle<int> r){
+    r=compact(r);
     auto c=std::make_unique<Choice>();c->box.setBounds(r);
+    if(juce::String(id)=="direction")
+        c->box.setTooltip("Sample playback: forward, reversed, or bouncing forwards/backwards");
     if(auto* p=dynamic_cast<juce::AudioParameterChoice*>(processor.state.getParameter(id))) {
         int item=1;for(auto& name:p->choices)c->box.addItem(name,item++);
     }
@@ -176,8 +401,15 @@ void AerytherAudioProcessorEditor::panel(juce::Graphics& g,juce::Rectangle<int> 
 void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
     auto r=waveformRect.toFloat();
     g.setColour(pale);g.fillRoundedRectangle(r,6);
-    auto peaks=processor.waveformPeaks(240);
-    auto hasAudio=processor.sampleFileName().isNotEmpty();
+    const auto name=processor.sampleFileName();
+    const auto revision=processor.sampleContentRevision();
+    if(revision!=cachedSampleRevision){
+        cachedPeaks=processor.waveformPeaks(240);
+        cachedSampleFile=name;
+        cachedSampleRevision=revision;
+    }
+    const auto& peaks=cachedPeaks;
+    auto hasAudio=name.isNotEmpty();
     if(!hasAudio){addLabel(g,"Drop WAV / AIFF / FLAC here",r.reduced(17),15);return;}
     int n=int(peaks.size());
     g.setColour(juce::Colour::fromRGB(119,156,195));
@@ -192,23 +424,39 @@ void AerytherAudioProcessorEditor::paintWaveform(juce::Graphics& g){
                                           r.getWidth()*(end-start),r.getHeight());
     g.setColour(blue);g.drawVerticalLine(int(r.getX()+r.getWidth()*start),r.getY(),r.getBottom());
     g.drawVerticalLine(int(r.getX()+r.getWidth()*end),r.getY(),r.getBottom());
+    // Animated sample readhead; host sync or MIDI-controlled playback.
+    if(processor.sampleHeadActive()){
+       float position=juce::jlimit(0.f,1.f,processor.sampleReadhead());
+       float x=r.getX()+r.getWidth()*(start+(end-start)*position);
+       g.setColour(juce::Colours::white.withAlpha(.75f));
+       g.drawVerticalLine(int(x)+1,r.getY()+2,r.getBottom()-2);
+       g.setColour(juce::Colour::fromRGB(23,107,213));
+       g.drawVerticalLine(int(x),r.getY()+2,r.getBottom()-2);
+    }
 }
 void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     g.fillAll(juce::Colour::fromRGB(239,243,249));
+    g.addTransform(juce::AffineTransform::scale(uiScale*contentScale()));
 #if defined(AERYTHER_FX)
     g.setColour(ink);g.setFont(juce::FontOptions(23.f));
-    g.drawText("AERYTHER FX",juce::Rectangle<int>{0,7,getWidth(),40},juce::Justification::centred);
+    g.drawText("AERYTHER FX",juce::Rectangle<int>{0,7,1080,40},juce::Justification::centred);
     g.setColour(ink);g.setFont(juce::FontOptions(11.f));
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{18,17,235,24},juce::Justification::centredLeft);
+    g.setColour(blue);g.setFont(juce::FontOptions(13.f));
+    g.drawText("AERYTHER 1.0",juce::Rectangle<int>{914,15,145,25},juce::Justification::centredRight);
     panel(g,{20,56,294,235},"FILTER");
-    panel(g,{321,56,290,235},"DELAY");
+    panel(g,{321,56,290,286},"DELAY");
     panel(g,{619,56,205,235},"CONVOLVER");
     panel(g,{832,56,238,235},"REVERB");
+    panel(g,{20,357,1050,119},"3 BAND EQ");
 #else
-    g.setColour(ink);g.setFont(juce::FontOptions(33.f));
-    g.drawFittedText("AERYTHER",{500,6,540,45},juce::Justification::centred,1);
-    g.setFont(juce::FontOptions(13.f));
-    g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{500,47,540,24},juce::Justification::centred,1);
+    // Less vertical emphasis on branding; more emphasis on the working controls.
+    g.setColour(ink);g.setFont(juce::FontOptions(25.f));
+    g.drawFittedText("AERYTHER",{555,8,430,30},juce::Justification::centred,1);
+    g.setFont(juce::FontOptions(10.f));
+    g.drawFittedText("3 LAYER AMBIENT INSTRUMENT",{555,39,430,18},juce::Justification::centred,1);
+    g.setColour(blue);g.setFont(juce::FontOptions(16.f));
+    g.drawText("BETA 1.2.3",juce::Rectangle<int>{1338,23,160,26},juce::Justification::centredRight);
     panel(g,{35,82,535,371},"SAMPLE");
     panel(g,{576,82,609,371},"WAVE");
     panel(g,{1190,82,320,371},"SUB");
@@ -216,11 +464,12 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     panel(g,{441,463,390,157},"FILTER ENV");
     panel(g,{836,463,339,157},"LFO 1");
     panel(g,{1181,463,329,157},"LFO 2");
-    panel(g,{35,627,1475,142},"MODULATION MATRIX");
-    panel(g,{35,777,452,118},"FILTER");
-    panel(g,{493,777,350,118},"DELAY");
-    panel(g,{849,777,467,118},"CONVOLVER");
-    panel(g,{1322,777,188,118},"REVERB");
+    panel(g,{35,627,1475,155},"MODULATION MATRIX");
+    panel(g,{35,795,452,118},"FILTER");
+    panel(g,{493,795,350,144},"DELAY");
+    panel(g,{849,795,467,118},"CONVOLVER");
+    panel(g,{1322,795,188,118},"REVERB");
+    panel(g,{35,948,1475,87},"3 BAND EQ");
     waveformRect={57,139,490,92};paintWaveform(g);
     // Minimal functional illustrations, drawn in JUCE rather than static imagery.
     auto graph=[&](juce::Rectangle<float> r, int kind, int traces){
@@ -241,30 +490,47 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
             g.strokePath(curve,juce::PathStrokeType(1.4f));
         }
     };
-    graph({600.f,139.f,554.f,92.f},0,6);
-    graph({1210.f,139.f,276.f,92.f},1,1);
-    graph({852.f,506.f,304.f,44.f},3,1);
-    graph({1198.f,506.f,293.f,44.f},3,1);
-    auto envGraph=[&](float x,float width){
-        juce::Path env;
-        const float y0=518.f;
-        env.startNewSubPath(x,y0+23);env.lineTo(x+width*.15f,y0-15);
-        env.lineTo(x+width*.65f,y0-1);env.lineTo(x+width*.82f,y0-1);
-        env.lineTo(x+width,y0+23);
-        g.setColour(blue);g.strokePath(env,juce::PathStrokeType(1.3f));
-    };
-    envGraph(59.f,350.f);envGraph(466.f,333.f);
+    // Keep decorative waveforms in small dedicated spaces above the waveform selectors.
+    // The old envelope/LFO art painted directly beneath actual interactive controls.
+    graph({600.f,139.f,554.f,33.f},0,6);
+    graph({1210.f,139.f,276.f,33.f},1,1);
     g.setColour(ink.withAlpha(.6f));g.setFont(juce::FontOptions(11.f));
-    g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{57,75,240,12},juce::Justification::left);
-    g.drawText(processor.sampleFileName(),juce::Rectangle<int>{342,103,206,21},juce::Justification::centredRight);
-    g.drawText("SOURCE",juce::Rectangle<int>{210,638,65,16},juce::Justification::left);
-    g.drawText("AMOUNT",juce::Rectangle<int>{570,638,75,16},juce::Justification::left);
-    g.drawText("DESTINATION",juce::Rectangle<int>{785,638,145,16},juce::Justification::left);
+    // Artist credit stays in the header and does not intersect the SAMPLE panel.
+    g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{56,47,260,17},juce::Justification::left);
+    g.drawFittedText(processor.sampleFileName(),
+                     juce::Rectangle<int>{206,105,181,21},
+                     juce::Justification::centredRight,1);
+    g.setColour(ink.withAlpha(.75f));
+    g.setFont(juce::FontOptions(11.f));
+    g.drawText("MODE",juce::Rectangle<int>{178,246,74,29},
+               juce::Justification::centredLeft);
+    for(int bank=0;bank<2;++bank){
+        const int dx=bank*730;
+        g.drawText("SOURCE",juce::Rectangle<int>{100+dx,662,180,16},juce::Justification::left);
+        g.drawText("AMOUNT",juce::Rectangle<int>{305+dx,662,125,16},juce::Justification::left);
+        g.drawText("DESTINATION",juce::Rectangle<int>{452+dx,662,190,16},juce::Justification::left);
+    }
 #endif
 }
 void AerytherAudioProcessorEditor::resized(){
+    // Bounds are fixed in compact design coordinates. Scaling the children via
+    // their component transforms preserves text, knobs, hit testing and spacing,
+    // while painting uses the identical uniform scale factor.
+    const float s=contentScale();
+    const auto t=juce::AffineTransform::scale(s);
+    for(auto& dial:dials) {
+        dial->slider.setTransform(t);
+        dial->label.setTransform(t);
+        dial->valueLabel.setTransform(t);
+    }
+    for(auto& sw:switches)sw->button.setTransform(t);
+    for(auto& ch:choices)ch->box.setTransform(t);
 #if !defined(AERYTHER_FX)
-    browse.setBounds(58,102,102,28);
+    browse.setBounds(compact({392,103,91,29}));
+    browse.setTransform(t);
+    clearSampleButton.setBounds(compact({488,103,65,29}));
+    clearSampleButton.setTransform(t);
+    clearSampleButton.setEnabled(processor.hasSample());
 #endif
 }
 bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files){
@@ -272,14 +538,37 @@ bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArra
     return false;
 }
 void AerytherAudioProcessorEditor::filesDropped(const juce::StringArray& files,int,int){
-    if(files.size() && processor.loadSample(juce::File(files[0])))repaint();
+    if(files.isEmpty())return;
+    if(!processor.loadSample(juce::File(files[0]))) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::MessageBoxIconType::WarningIcon,"Sample not loaded",
+            "Choose a WAV, AIFF or FLAC file up to 5 minutes long.");
+    } else {
+        cachedSampleRevision=~uint64_t(0);
+        resized();
+        repaint();
+    }
 }
 void AerytherAudioProcessorEditor::browseForAudio(){
-    chooser=std::make_unique<juce::FileChooser>("Load audio",juce::File{},"*.wav;*.aiff;*.aif;*.flac");
-    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [safe=juce::Component::SafePointer<AerytherAudioProcessorEditor>(this)](const juce::FileChooser& fc){
-            if(safe && fc.getResult().existsAsFile()){
-                safe->processor.loadSample(fc.getResult());safe->repaint();
+    // Offer a new file every time; selection replaces the previous audio.
+    // Native file chooser keeps access permissions on macOS.
+    chooser=std::make_unique<juce::FileChooser>(
+        "Load or replace a sample",juce::File{},"*.wav;*.aif;*.aiff;*.flac");
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe=juce::Component::SafePointer<AerytherAudioProcessorEditor>(this)]
+        (const juce::FileChooser& fc){
+            if(!safe)return;
+            const auto chosen=fc.getResult();
+            if(chosen == juce::File{})return; // User cancelled.
+            if(!safe->processor.loadSample(chosen)){
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::WarningIcon,"Sample not loaded",
+                    "Choose a WAV, AIFF or FLAC file up to 5 minutes long.");
+            } else {
+                safe->cachedSampleRevision=~uint64_t(0);
+                safe->repaint();
+                safe->resized();
             }
         });
 }
@@ -292,18 +581,22 @@ void AerytherAudioProcessorEditor::setLoopMarker(float fraction,bool start){
                     juce::jlimit(juce::jmin(1.f,other+0.002f),1.f,fraction);
     param->beginChangeGesture();param->setValueNotifyingHost(param->convertTo0to1(fraction));
     param->endChangeGesture();
-    repaint(waveformRect);
+    repaint();
 }
 void AerytherAudioProcessorEditor::mouseDown(const juce::MouseEvent& e){
-    if(!waveformRect.contains(e.getPosition()))return;
-    float frac=float(e.getPosition().x-waveformRect.getX())/waveformRect.getWidth();
+    int x=juce::roundToInt(float(e.getPosition().x)/(uiScale*contentScale()));
+    int y=juce::roundToInt(float(e.getPosition().y)/(uiScale*contentScale()));
+    if(!waveformRect.contains(x,y))return;
+    float frac=float(x-waveformRect.getX())/waveformRect.getWidth();
     float a=processor.state.getRawParameterValue("loopStart")->load(),
           b=processor.state.getRawParameterValue("loopEnd")->load();
     draggingLoopStart=std::abs(frac-a)<std::abs(frac-b);
     setLoopMarker(frac,draggingLoopStart);
 }
 void AerytherAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e){
-    if(!waveformRect.expanded(60).contains(e.getPosition()))return;
-    setLoopMarker(float(e.getPosition().x-waveformRect.getX())/waveformRect.getWidth(),draggingLoopStart);
+    int x=juce::roundToInt(float(e.getPosition().x)/(uiScale*contentScale()));
+    int y=juce::roundToInt(float(e.getPosition().y)/(uiScale*contentScale()));
+    if(!waveformRect.expanded(60).contains(x,y))return;
+    setLoopMarker(float(x-waveformRect.getX())/waveformRect.getWidth(),draggingLoopStart);
 }
 juce::AudioProcessorEditor* AerytherAudioProcessor::createEditor(){return new AerytherAudioProcessorEditor(*this);}

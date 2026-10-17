@@ -19,6 +19,8 @@ private:
     struct LightLook final : juce::LookAndFeel_V4 {
         LightLook();
         void drawRotarySlider(juce::Graphics&,int,int,int,int,float,float,float,juce::Slider&) override;
+        void drawLinearSlider(juce::Graphics&,int,int,int,int,float,float,float,
+                              const juce::Slider::SliderStyle,juce::Slider&) override;
         void drawButtonBackground(juce::Graphics&,juce::Button&,const juce::Colour&,bool,bool) override;
         void drawToggleButton(juce::Graphics&,juce::ToggleButton&,bool,bool) override;
     } look;
@@ -28,6 +30,8 @@ private:
     struct Dial {
         juce::Slider slider;
         juce::Label label;
+        juce::Label valueLabel; // persistent, editable SAMPLE BPM/ROOT readout
+        juce::String parameterID;
         std::unique_ptr<SlideAttach> attachment;
         juce::String name;
     };
@@ -40,12 +44,25 @@ private:
         std::unique_ptr<ChoiceAttach> attachment;
     };
     AerytherAudioProcessor& processor;
+    // Resize the entire UI proportionally, keeping all children/font sizes in
+    // their original measured compact geometry instead of reflowing controls.
+    float contentScale() const noexcept;
+#if defined(AERYTHER_FX)
+    static constexpr int defaultWidth=758,defaultHeight=338;
+#else
+    static constexpr int defaultWidth=1033,defaultHeight=714;
+#endif
+
     std::vector<std::unique_ptr<Dial>> dials;
     std::vector<std::unique_ptr<Switch>> switches;
     std::vector<std::unique_ptr<Choice>> choices;
     juce::TextButton browse{"LOAD AUDIO"};
+    juce::TextButton clearSampleButton{"CLEAR"};
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> waveformRect;
+    std::vector<float> cachedPeaks;
+    juce::String cachedSampleFile;
+    uint64_t cachedSampleRevision=~uint64_t(0);
     bool draggingLoopStart=false;
     void addDial(const char* id,const char* title,juce::Rectangle<int> bounds);
     void addSwitch(const char* id,const char* title,juce::Rectangle<int> bounds);
@@ -55,6 +72,7 @@ private:
     void paintWaveform(juce::Graphics&);
     void browseForAudio();
     void setLoopMarker(float frac,bool start);
-    void timerCallback() override { repaint(waveformRect.expanded(2)); }
+    void refreshParameterReadouts();
+    void timerCallback() override;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AerytherAudioProcessorEditor)
 };
