@@ -48,6 +48,21 @@ int main() {
   assert(std::abs(sampleReadPosition(1,120,48000,100,48100,1)-24100)<0.001);
   assert(std::abs(sampleReadPosition(2,120,48000,100,48100,2)-48100)<0.001);
   assert(sampleReadPosition(1,0,48000,0,48000,0)==0);
+  // A 10-frame test loop: forward, reverse and bounced playback must
+  // differ, use legal sample indices and reflect exactly at the endpoints.
+  for(int i=0;i<40;++i)for(int direction=0;direction<3;++direction){
+      const auto position=directedSamplePosition(double(i),0.0,10.0,direction);
+      assert(position>=0.0 && position<=9.0);
+  }
+  assert(directedSamplePosition(0.0,0.0,10.0,0)==0.0);
+  assert(directedSamplePosition(0.0,0.0,10.0,1)==9.0);
+  assert(directedSamplePosition(1.0,0.0,10.0,1)==8.0);
+  assert(directedSamplePosition(9.0,0.0,10.0,2)==9.0);
+  assert(directedSamplePosition(10.0,0.0,10.0,2)==8.0);
+  assert(directedSamplePosition(18.0,0.0,10.0,2)==0.0);
+  assert(directedSamplePosition(5.0,40.0,50.0,0)==45.0);
+  assert(directedSamplePosition(5.0,40.0,50.0,1)==44.0);
+
   assert(std::isfinite(wetDry(.4f,.2f,.5f)));
   // 75ms dual-tap TIME change: no discontinuity when moving the knob or
   // selecting a different SYNC subdivision; preserve both ends exactly.
