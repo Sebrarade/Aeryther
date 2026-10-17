@@ -735,7 +735,7 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
 void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int samples,float lfo1,float lfo2,
                                           double hostBpm) {
     convInput.clear();processed.clear();convWet.clear();
-    bool anyProcessedPath=false;
+    bool anyProcessedPath=false,anyConvolverRoute=false;
     for(int layer=0;layer<3;++layer) {
         const char* prefixes[]={"sample","wave","sub"};
         juce::String s(prefixes[layer]);
@@ -750,6 +750,7 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
         // No Direct, Filter, Delay or Convolution: completely silent layer.
         if(!routes.hasProcessedPath())continue;
         anyProcessedPath=true;
+        anyConvolverRoute|=routes.convolved;
         if(routes.filtered){
             float originalCutoff=get("cutoff");
             float cutoff=clampf(originalCutoff*std::pow(2.0f,modulated("cutoff",0,lfo1,lfo2)*4.0f),30,18000);
@@ -790,25 +791,25 @@ void AerytherAudioProcessor::applyRouting(juce::AudioBuffer<float>& output,int s
             clampf(modulated("eqMid",get("eqMid"),lfo1,lfo2),-18.f,18.f),
             clampf(modulated("eqHigh",get("eqHigh"),lfo1,lfo2),-18.f,18.f));
     }
-    auto mode=juce::jlimit(0,3,int(get("convMode")));
-    convWet.makeCopyOf(convInput,true);
-    // PRE shapes only the signal that enters convolution, not the bypass dry
-    // copy. POST shapes the convolution result; both leave other layers alone.
-    if(eqOn && eqPos==0)convolverEQ.process(convWet);
-    juce::dsp::AudioBlock<float> block(convWet);
-    juce::dsp::ProcessContextReplacing<float> context(block);
-    convolutions[size_t(mode + (enabled("convReverse")?4:0))].process(context);
-    float mix=clampf(modulated("convMix",get("convMix"),lfo1,lfo2),0,1);
-    for(int ch=0;ch<2;++ch) {
-        for(int i=0;i<samples;++i) {
-            float dry=convInput.getSample(ch,i),wet=convWet.getSample(ch,i);
-            processed.addSample(ch,i,aeryther::wetDry(dry,wet,mix));
-        }
+    // A huge convolution of a silent block is still extremely expensive.
+    // Bypass it completely unless at least one layer's CONV route is ON.
+    // This also avoids 34-54s of useless FFT work when using FILTER/DELAY only.
+    if(anyConvolverRoute) {
+        auto mode=juce::jlimit(0,3,int(get("convMode")));
+        convWet.makeCopyOf(convInput,true);
+        // PRE shapes the excitation; POST shapes the audible convolver output.
+        if(eqOn && eqPos==0)convolverEQ.process(convWet);
+        juce::dsp::AudioBlock<float> block(convWet);
+        juce::dsp::ProcessContextReplacing<float> context(block);
+        convolutions[size_t(mode + (enabled("convReverse")?4:0))].process(context);
+        const float mix=clampf(modulated("convMix",get("convMix"),lfo1,lfo2),0,1);
+        for(int ch=0;ch<2;++ch)
+            for(int i=0;i<samples;++i) {
+                const float dry=convInput.getSample(ch,i),wet=convWet.getSample(ch,i);
+                processed.addSample(ch,i,aeryther::wetDry(dry,wet,mix));
+            }
+        if(eqOn && eqPos==1)convolverEQ.process(processed);
     }
-    // POST EQ acts on the actual audible convolver output, including its
-    // dry/wet blend. Unlike the prior post-only-wet path, dialing EQ gives
-    // an immediate audible response even if a reverse impulse is still blooming.
-    if(eqOn && eqPos==1)convolverEQ.process(processed);
     wetScratch.makeCopyOf(processed,true);
     reverb.process(wetScratch,
         clampf(modulated("reverbDecay",get("reverbDecay"),lfo1,lfo2),0.5f,60.f),
