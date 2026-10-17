@@ -420,18 +420,43 @@ void AerytherAudioProcessor::prepareToPlay(double sr,int maximumBlock) {
 }
 void AerytherAudioProcessor::releaseResources() {}
 
-bool AerytherAudioProcessor::loadSample(const juce::File& file) {
+bool AerytherAudioProcessor::loadSample(const juce::File& file,bool resetLoopRange) {
+    if(!file.existsAsFile())return false;
     juce::AudioFormatManager formats;formats.registerBasicFormats();
     auto reader=std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(file));
-    if(!reader || reader->lengthInSamples<2 || reader->lengthInSamples>reader->sampleRate*120.0 ||
-       reader->numChannels==0)return false;
+    if(!reader || reader->sampleRate<=0.0 || reader->lengthInSamples<2 ||
+       reader->lengthInSamples>reader->sampleRate*120.0 || reader->numChannels==0)
+        return false;
     auto next=std::make_shared<SampleData>();
-    next->rate=reader->sampleRate; next->path=file.getFullPathName();
-    next->samples.setSize(juce::jmin(2,int(reader->numChannels)),int(reader->lengthInSamples));
-    if(!reader->read(&next->samples,0,int(reader->lengthInSamples),0,true,true))return false;
+    next->rate=reader->sampleRate;
+    next->path=file.getFullPathName();
+    next->samples.setSize(juce::jmin(2,int(reader->numChannels)),
+                          int(reader->lengthInSamples));
+    if(!reader->read(&next->samples,0,int(reader->lengthInSamples),0,true,true))
+        return false;
+    // A new file must not inherit shortened loop markers from the old file.
+    // Restoring a saved DAW project is different: preserve its stored markers.
+    if(resetLoopRange){
+        for(const auto* id:{"loopStart","loopEnd"}){
+            if(auto* p=state.getParameter(id)){
+                const float value=juce::String(id)=="loopStart"?0.f:1.f;
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(p->convertTo0to1(value));
+                p->endChangeGesture();
+            }
+        }
+    }
     std::atomic_store(&sample,std::shared_ptr<const SampleData>(next));
     {juce::ScopedLock guard(fileNameMutex);loadedSamplePath=next->path;}
+    sampleRevision.fetch_add(1,std::memory_order_relaxed);
     return true;
+}
+void AerytherAudioProcessor::clearSample(){
+    std::atomic_store(&sample,std::shared_ptr<const SampleData>{});
+    {juce::ScopedLock guard(fileNameMutex);loadedSamplePath.clear();}
+    sampleRevision.fetch_add(1,std::memory_order_relaxed);
+    playbackActive.store(false,std::memory_order_relaxed);
+    playbackFraction.store(0.f,std::memory_order_relaxed);
 }
 juce::String AerytherAudioProcessor::sampleFileName() const {
     juce::ScopedLock guard(fileNameMutex);
@@ -618,15 +643,8 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
     }
 
     auto readSource=[&](int channel,double unwrapped)->float {
-        double position;
-        if(direction==1) {
-            position=double(end-1)-aeryther::wrapped(unwrapped,loopSize);
-        } else if(direction==2) {
-            const double x=aeryther::wrapped(unwrapped,loopSize*2.0);
-            position=double(start)+(x<=loopSize?x:2.0*loopSize-x);
-        } else {
-            position=double(start)+aeryther::wrapped(unwrapped,loopSize);
-        }
+        const double position=aeryther::directedSamplePosition(
+            unwrapped,double(start),double(end),direction);
         return readInterpolated(data->samples,channel,
             juce::jlimit(double(start),double(end-1),position));
     };
@@ -955,7 +973,11 @@ void AerytherAudioProcessor::setStateInformation(const void* ptr,int n) {
         auto restored=juce::ValueTree::fromXml(*doc);
         auto path=restored.getProperty("samplePath").toString();
         state.replaceState(restored);
-        if(path.isNotEmpty())loadSample(juce::File(path));
+        if(path.isNotEmpty()){
+            if(!loadSample(juce::File(path),false))clearSample();
+        } else {
+            clearSample();
+        }
     }
 }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {return new AerytherAudioProcessor();}
