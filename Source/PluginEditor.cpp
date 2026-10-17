@@ -123,6 +123,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
     addDial("eqHigh","HIGH",{850,384,92,82});
 #else
     setSize(1033,714);
+    browse.setButtonText("LOAD");
     browse.onClick=[this]{browseForAudio();};
     browse.setTooltip("Replace the loaded sample with another WAV, AIFF or FLAC");
     addAndMakeVisible(browse);
@@ -131,6 +132,7 @@ AerytherAudioProcessorEditor::AerytherAudioProcessorEditor(AerytherAudioProcesso
         cachedSampleFile.clear();
         cachedPeaks.clear();
         cachedSampleRevision=~uint64_t(0);
+        clearSampleButton.setEnabled(false);
         repaint();
     };
     clearSampleButton.setTooltip("Remove the current sample without removing other layers");
@@ -376,6 +378,8 @@ void AerytherAudioProcessorEditor::addSwitch(const char* id,const char* title,ju
 void AerytherAudioProcessorEditor::addChoice(const char* id,juce::Rectangle<int> r){
     r=compact(r);
     auto c=std::make_unique<Choice>();c->box.setBounds(r);
+    if(juce::String(id)=="direction")
+        c->box.setTooltip("Sample playback: forward, reversed, or bouncing forwards/backwards");
     if(auto* p=dynamic_cast<juce::AudioParameterChoice*>(processor.state.getParameter(id))) {
         int item=1;for(auto& name:p->choices)c->box.addItem(name,item++);
     }
@@ -494,8 +498,12 @@ void AerytherAudioProcessorEditor::paint(juce::Graphics& g){
     // Artist credit stays in the header and does not intersect the SAMPLE panel.
     g.drawText("Volodymyr Gnatenko",juce::Rectangle<int>{56,47,260,17},juce::Justification::left);
     g.drawFittedText(processor.sampleFileName(),
-                     juce::Rectangle<int>{206,105,185,21},
+                     juce::Rectangle<int>{206,105,181,21},
                      juce::Justification::centredRight,1);
+    g.setColour(ink.withAlpha(.75f));
+    g.setFont(juce::FontOptions(11.f));
+    g.drawText("MODE",juce::Rectangle<int>{178,246,74,29},
+               juce::Justification::centredLeft);
     for(int bank=0;bank<2;++bank){
         const int dx=bank*730;
         g.drawText("SOURCE",juce::Rectangle<int>{100+dx,662,180,16},juce::Justification::left);
@@ -530,7 +538,16 @@ bool AerytherAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArra
     return false;
 }
 void AerytherAudioProcessorEditor::filesDropped(const juce::StringArray& files,int,int){
-    if(files.size() && processor.loadSample(juce::File(files[0])))repaint();
+    if(files.isEmpty())return;
+    if(!processor.loadSample(juce::File(files[0]))) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::MessageBoxIconType::WarningIcon,"Sample not loaded",
+            "Choose a WAV, AIFF or FLAC file up to 5 minutes long.");
+    } else {
+        cachedSampleRevision=~uint64_t(0);
+        resized();
+        repaint();
+    }
 }
 void AerytherAudioProcessorEditor::browseForAudio(){
     // Offer a new file every time; selection replaces the previous audio.
@@ -547,7 +564,7 @@ void AerytherAudioProcessorEditor::browseForAudio(){
             if(!safe->processor.loadSample(chosen)){
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::MessageBoxIconType::WarningIcon,"Sample not loaded",
-                    "Please choose an existing WAV, AIFF or FLAC shorter than 2 minutes.");
+                    "Choose a WAV, AIFF or FLAC file up to 5 minutes long.");
             } else {
                 safe->cachedSampleRevision=~uint64_t(0);
                 safe->repaint();
