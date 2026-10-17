@@ -659,6 +659,9 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
     if(data.get()!=activeSamplerData) {
         activeSamplerData=data.get();
         loopSamplerGrain.reset();
+        // The new file must not inherit a grain position from the previous
+        // sample, especially when both files have different durations.
+        for(auto& voice:sampleVoices)if(voice.active)voice.samplerGrain.reset();
         expectedSamplerFrame=-1;
     }
 
@@ -744,8 +747,12 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
                     loopSamplerGrain.sourcePosition,loopSize);
         }
         expectedSamplerFrame=firstFrame+length;
+        // The waveform cursor must visibly move BACKWARD or bounce when the
+        // user selects REVERSE / PING-PONG, not always travel left-to-right.
+        const auto displayPos=aeryther::directedSamplePosition(
+            loopSamplerGrain.sourcePosition,0.0,loopSize,direction);
         playbackFraction.store(
-            float(aeryther::wrapped(loopSamplerGrain.sourcePosition,loopSize)/loopSize),
+            float(displayPos/juce::jmax(1.0,loopSize-1.0)),
             std::memory_order_relaxed);
         playbackActive.store(true,std::memory_order_relaxed);
     } else {
@@ -775,8 +782,11 @@ void AerytherAudioProcessor::renderSampler(juce::AudioBuffer<float>& out,int fir
                 voice.samplePosition+=1.0;
             }
             if(voice.active){
-                playbackFraction.store(float(aeryther::wrapped(
-                    grain.sourcePosition,loopSize)/loopSize),std::memory_order_relaxed);
+                const auto displayPos=aeryther::directedSamplePosition(
+                    grain.sourcePosition,0.0,loopSize,direction);
+                playbackFraction.store(
+                    float(displayPos/juce::jmax(1.0,loopSize-1.0)),
+                    std::memory_order_relaxed);
                 active=true;
             }
         }
